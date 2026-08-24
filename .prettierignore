@@ -1,0 +1,7 @@
+node_modules/
+dist/
+coverage/
+src/generated/prisma/
+package-lock.json
+AGENTS.md
+CODEX_B2B_MARKETPLACE_API_BUILD_BRIEF.md

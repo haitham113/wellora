@@ -1,0 +1,9 @@
+process.env.NODE_ENV ??= 'test';
+process.env.PORT ??= '3000';
+process.env.LOG_LEVEL ??= 'silent';
+process.env.CORS_ORIGINS ??= 'http://localhost:3000';
+process.env.DATABASE_URL ??= 'postgresql://user:password@127.0.0.1:55432/wellora';
+process.env.DB_POOL_MAX ??= '2';
+process.env.DB_CONNECT_TIMEOUT_MS ??= '150';
+process.env.REDIS_URL ??= 'redis://127.0.0.1:56379';
+process.env.REDIS_CONNECT_TIMEOUT_MS ??= '150';
