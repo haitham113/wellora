@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Lint, test, and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:18.6-alpine3.23
+        env:
+          POSTGRES_DB: wellora_ci
+          POSTGRES_USER: wellora_ci
+          POSTGRES_PASSWORD: ci-ephemeral-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U wellora_ci -d wellora_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:8.10.1-alpine3.23
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      NODE_ENV: test
+      PORT: 3000
+      LOG_LEVEL: silent
+      CORS_ORIGINS: http://localhost:3000
+      DATABASE_URL: postgresql://wellora_ci:ci-ephemeral-password@localhost:5432/wellora_ci?schema=public
+      DB_POOL_MAX: 5
+      DB_CONNECT_TIMEOUT_MS: 3000
+      REDIS_URL: redis://localhost:6379
+      REDIS_CONNECT_TIMEOUT_MS: 3000
+      EXPECT_DEPENDENCIES_READY: 'true'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.16.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate Prisma schema
+        run: npm run prisma:validate
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Run e2e tests
+        run: npm run test:e2e
+
+      - name: Build
+        run: npm run build
+
+      - name: Validate Docker Compose
+        run: docker compose --env-file .env.example config --quiet
