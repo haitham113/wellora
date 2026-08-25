@@ -36,7 +36,12 @@ The package also supports Node.js 22.12 or newer in the Node 22 line. Older Node
    cp .env.example .env
    ```
 
-2. Replace the example PostgreSQL password in `.env`. Keep `POSTGRES_PASSWORD` and the password embedded in `DATABASE_URL` synchronized.
+2. Replace all example credentials in `.env`:
+
+   - Keep `POSTGRES_PASSWORD` and the password embedded in `DATABASE_URL` synchronized.
+   - Generate independent random values for `JWT_ACCESS_SECRET` and `AUTH_METADATA_SECRET`. For example, run `openssl rand -base64 48` separately for each value.
+
+   Production startup rejects the tracked placeholder values and refuses to reuse JWT signing material as the metadata HMAC key.
 
 3. Build and start the stack. The one-shot migration container applies pending migrations before the API starts:
 
@@ -80,13 +85,17 @@ All runtime configuration is validated during startup. The application fails fas
 | `REDIS_URL`                      | Redis connection URL                          |
 | `REDIS_CONNECT_TIMEOUT_MS`       | Redis connection timeout                      |
 | `JWT_ACCESS_SECRET`              | HMAC secret for access-token signatures       |
+| `JWT_ACCESS_KEY_ID`              | Identifier for the active JWT signing key     |
+| `JWT_ACCESS_PREVIOUS_KEYS`       | JSON key ring accepted during JWT rotation    |
 | `JWT_ISSUER`                     | Required access-token issuer                  |
 | `JWT_AUDIENCE`                   | Required access-token audience                |
 | `JWT_ACCESS_TTL_SECONDS`         | Short-lived JWT validity                      |
 | `REFRESH_TOKEN_TTL_SECONDS`      | Maximum session and refresh lifetime          |
 | `AUTH_METADATA_SECRET`           | HMAC key for IP/rate-limit fingerprints       |
-| `AUTH_RATE_LIMIT_MAX`            | Attempts per sensitive endpoint/window        |
+| `AUTH_RATE_LIMIT_MAX`            | Attempts per auth subject/window              |
+| `AUTH_RATE_LIMIT_IP_MAX`         | Aggregate attempts per client IP/window       |
 | `AUTH_RATE_LIMIT_WINDOW_SECONDS` | Distributed rate-limit window                 |
+| `AUTH_PUBLIC_RESPONSE_MIN_MS`    | Enumeration-resistant public response floor   |
 | `SWAGGER_ENABLED`                | Enables local OpenAPI UI and JSON             |
 
 Do not commit `.env`; only `.env.example` is tracked.
@@ -119,6 +128,8 @@ Bearer-authenticated routes:
 - `GET /api/v1/me`
 
 Forgot-password and verification requests deliberately return the same accepted response for known and unknown accounts. Secure token creation and consumption are implemented; email transport will be connected to the asynchronous notification workflow in Phase 8, and tokens are never returned from these request endpoints.
+
+Password change is treated as a security boundary: it revokes every session, refresh token, and outstanding password-reset token. The caller must sign in again with the new password.
 
 ## Quality commands
 
