@@ -40,6 +40,7 @@ import {
   ProviderResponseDto,
 } from './dto/provider-response.dto.js';
 import { ProvidersService } from './providers.service.js';
+import { ProviderMembersService } from './provider-members.service.js';
 
 @ApiTags('Providers')
 @ApiBearerAuth()
@@ -48,7 +49,10 @@ import { ProvidersService } from './providers.service.js';
 @Authenticated()
 @Controller('providers/:providerId')
 export class ProvidersController {
-  constructor(private readonly providers: ProvidersService) {}
+  constructor(
+    private readonly providers: ProvidersService,
+    private readonly members: ProviderMembersService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'Get a provider through current tenant membership' })
@@ -79,7 +83,7 @@ export class ProvidersController {
     @Param('providerId', new ParseUUIDPipe({ version: '4' })) providerId: string,
     @Query() query: ProviderMemberListQueryDto,
   ): Promise<ProviderMemberPageResponseDto> {
-    return this.providers.listMembers(principal, providerId, query);
+    return this.members.list(principal, providerId, query);
   }
 
   @Post('members')
@@ -91,7 +95,7 @@ export class ProvidersController {
     @Param('providerId', new ParseUUIDPipe({ version: '4' })) providerId: string,
     @Body() input: AddProviderMemberDto,
   ): Promise<ProviderMemberResponseDto> {
-    return this.providers.addMember(principal, providerId, input);
+    return this.members.add(principal, providerId, input);
   }
 
   @Patch('members/:membershipId')
@@ -104,7 +108,7 @@ export class ProvidersController {
     @Param('membershipId', new ParseUUIDPipe({ version: '4' })) membershipId: string,
     @Body() input: UpdateProviderMemberDto,
   ): Promise<ProviderMemberResponseDto> {
-    return this.providers.updateMember(principal, providerId, membershipId, input);
+    return this.members.update(principal, providerId, membershipId, input);
   }
 
   @Delete('members/:membershipId')
@@ -116,7 +120,7 @@ export class ProvidersController {
     @Param('providerId', new ParseUUIDPipe({ version: '4' })) providerId: string,
     @Param('membershipId', new ParseUUIDPipe({ version: '4' })) membershipId: string,
   ): Promise<void> {
-    return this.providers.deactivateMember(principal, providerId, membershipId);
+    return this.members.deactivate(principal, providerId, membershipId);
   }
 
   @Post('members/:membershipId/activate')
@@ -128,6 +132,6 @@ export class ProvidersController {
     @Param('providerId', new ParseUUIDPipe({ version: '4' })) providerId: string,
     @Param('membershipId', new ParseUUIDPipe({ version: '4' })) membershipId: string,
   ): Promise<ProviderMemberResponseDto> {
-    return this.providers.activateMember(principal, providerId, membershipId);
+    return this.members.activate(principal, providerId, membershipId);
   }
 }

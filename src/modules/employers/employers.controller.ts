@@ -47,6 +47,8 @@ import {
   EmployerSettingsResponseDto,
 } from './dto/employer-response.dto.js';
 import { EmployersService } from './employers.service.js';
+import { EmployerAdminsService } from './employer-admins.service.js';
+import { EmployeesService } from './employees.service.js';
 
 @ApiTags('Employers')
 @ApiBearerAuth()
@@ -55,7 +57,11 @@ import { EmployersService } from './employers.service.js';
 @Authenticated()
 @Controller('employers/:employerId')
 export class EmployersController {
-  constructor(private readonly employers: EmployersService) {}
+  constructor(
+    private readonly employers: EmployersService,
+    private readonly admins: EmployerAdminsService,
+    private readonly employees: EmployeesService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'Get an employer through current tenant membership' })
@@ -107,7 +113,7 @@ export class EmployersController {
     @Param('employerId', new ParseUUIDPipe({ version: '4' })) employerId: string,
     @Query() query: EmployerAdminListQueryDto,
   ): Promise<EmployerAdminPageResponseDto> {
-    return this.employers.listAdmins(principal, employerId, query);
+    return this.admins.list(principal, employerId, query);
   }
 
   @Post('admins')
@@ -119,7 +125,7 @@ export class EmployersController {
     @Param('employerId', new ParseUUIDPipe({ version: '4' })) employerId: string,
     @Body() input: AddEmployerAdminDto,
   ): Promise<EmployerAdminResponseDto> {
-    return this.employers.addAdmin(principal, employerId, input);
+    return this.admins.add(principal, employerId, input);
   }
 
   @Delete('admins/:membershipId')
@@ -131,7 +137,7 @@ export class EmployersController {
     @Param('employerId', new ParseUUIDPipe({ version: '4' })) employerId: string,
     @Param('membershipId', new ParseUUIDPipe({ version: '4' })) membershipId: string,
   ): Promise<void> {
-    return this.employers.deactivateAdmin(principal, employerId, membershipId);
+    return this.admins.deactivate(principal, employerId, membershipId);
   }
 
   @Post('admins/:membershipId/activate')
@@ -143,7 +149,7 @@ export class EmployersController {
     @Param('employerId', new ParseUUIDPipe({ version: '4' })) employerId: string,
     @Param('membershipId', new ParseUUIDPipe({ version: '4' })) membershipId: string,
   ): Promise<EmployerAdminResponseDto> {
-    return this.employers.activateAdmin(principal, employerId, membershipId);
+    return this.admins.activate(principal, employerId, membershipId);
   }
 
   @Get('employees')
@@ -154,7 +160,7 @@ export class EmployersController {
     @Param('employerId', new ParseUUIDPipe({ version: '4' })) employerId: string,
     @Query() query: EmployeeListQueryDto,
   ): Promise<EmployeePageResponseDto> {
-    return this.employers.listEmployees(principal, employerId, query);
+    return this.employees.list(principal, employerId, query);
   }
 
   @Post('employees')
@@ -166,7 +172,7 @@ export class EmployersController {
     @Param('employerId', new ParseUUIDPipe({ version: '4' })) employerId: string,
     @Body() input: CreateEmployeeDto,
   ): Promise<EmployeeResponseDto> {
-    return this.employers.createEmployee(principal, employerId, input);
+    return this.employees.create(principal, employerId, input);
   }
 
   @Get('employees/:employeeId')
@@ -180,7 +186,7 @@ export class EmployersController {
     @Param('employerId', new ParseUUIDPipe({ version: '4' })) employerId: string,
     @Param('employeeId', new ParseUUIDPipe({ version: '4' })) employeeId: string,
   ): Promise<EmployeeResponseDto> {
-    return this.employers.getEmployee(principal, employerId, employeeId);
+    return this.employees.get(principal, employerId, employeeId);
   }
 
   @Patch('employees/:employeeId')
@@ -192,7 +198,7 @@ export class EmployersController {
     @Param('employeeId', new ParseUUIDPipe({ version: '4' })) employeeId: string,
     @Body() input: UpdateEmployeeDto,
   ): Promise<EmployeeResponseDto> {
-    return this.employers.updateEmployee(principal, employerId, employeeId, input);
+    return this.employees.update(principal, employerId, employeeId, input);
   }
 
   @Post('employees/:employeeId/activate')
@@ -204,12 +210,7 @@ export class EmployersController {
     @Param('employerId', new ParseUUIDPipe({ version: '4' })) employerId: string,
     @Param('employeeId', new ParseUUIDPipe({ version: '4' })) employeeId: string,
   ): Promise<EmployeeResponseDto> {
-    return this.employers.setEmployeeStatus(
-      principal,
-      employerId,
-      employeeId,
-      EmployeeStatus.ACTIVE,
-    );
+    return this.employees.setStatus(principal, employerId, employeeId, EmployeeStatus.ACTIVE);
   }
 
   @Post('employees/:employeeId/deactivate')
@@ -221,11 +222,6 @@ export class EmployersController {
     @Param('employerId', new ParseUUIDPipe({ version: '4' })) employerId: string,
     @Param('employeeId', new ParseUUIDPipe({ version: '4' })) employeeId: string,
   ): Promise<EmployeeResponseDto> {
-    return this.employers.setEmployeeStatus(
-      principal,
-      employerId,
-      employeeId,
-      EmployeeStatus.INACTIVE,
-    );
+    return this.employees.setStatus(principal, employerId, employeeId, EmployeeStatus.INACTIVE);
   }
 }

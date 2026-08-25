@@ -4,7 +4,6 @@ import type { AuthPrincipal } from '../../common/auth/auth-principal.js';
 import { paginationMeta } from '../../common/pagination/page-query.dto.js';
 import {
   AccountStatus,
-  MembershipStatus,
   OrganizationStatus,
   ProviderMembershipRole,
 } from '../../generated/prisma/enums.js';
@@ -17,20 +16,12 @@ import {
   resourceNotFound,
 } from '../organizations/organization-errors.js';
 import type {
-  AddProviderMemberDto,
   AdminUpdateProviderDto,
   CreateProviderDto,
   ProviderListQueryDto,
-  ProviderMemberListQueryDto,
   TenantUpdateProviderDto,
-  UpdateProviderMemberDto,
 } from './dto/provider-request.dto.js';
-import type {
-  ProviderMemberPageResponseDto,
-  ProviderMemberResponseDto,
-  ProviderPageResponseDto,
-  ProviderResponseDto,
-} from './dto/provider-response.dto.js';
+import type { ProviderPageResponseDto, ProviderResponseDto } from './dto/provider-response.dto.js';
 import { ProviderAuthorizationPolicy } from './provider-authorization.policy.js';
 
 const providerSelect = {
@@ -49,8 +40,6 @@ const providerSelect = {
   updatedAt: true,
 } as const;
 
-const memberInclude = { user: { select: { email: true } } } as const;
-
 @Injectable()
 export class ProvidersService {
   constructor(
@@ -62,7 +51,17 @@ export class ProvidersService {
     this.assertTimeZone(input.timezone);
     try {
       const provider = await this.database.$transaction(async (transaction) => {
-        await this.assertAssignableUser(transaction, input.initialAdminUserId);
+        const user = await transaction.user.findUnique({
+          where: { id: input.initialAdminUserId },
+          select: { status: true },
+        });
+        if (user === null) throw resourceNotFound('User');
+        if (user.status !== AccountStatus.ACTIVE) {
+          throw invalidOperation(
+            'USER_NOT_ACTIVE',
+            'Only an active account can be assigned access.',
+          );
+        }
         const created = await transaction.provider.create({
           data: {
             businessName: input.businessName.trim(),
@@ -124,7 +123,7 @@ export class ProvidersService {
     };
   }
 
-  async getAdminDetail(providerId: string): Promise<ProviderResponseDto> {
+  getAdminDetail(providerId: string): Promise<ProviderResponseDto> {
     return this.getExistingProvider(providerId);
   }
 
@@ -166,149 +165,6 @@ export class ProvidersService {
     await this.authorization.authorize(principal, providerId, [ProviderMembershipRole.ADMIN]);
     if (input.timezone !== undefined) this.assertTimeZone(input.timezone);
     return this.updateProviderRecord(providerId, input);
-  }
-
-  async listMembers(
-    principal: AuthPrincipal,
-    providerId: string,
-    query: ProviderMemberListQueryDto,
-  ): Promise<ProviderMemberPageResponseDto> {
-    await this.authorization.authorize(principal, providerId, [ProviderMembershipRole.ADMIN]);
-    const search = query.search?.trim();
-    const where = {
-      providerId,
-      ...(query.role === undefined ? {} : { role: query.role }),
-      ...(query.status === undefined ? {} : { status: query.status }),
-      ...(search === undefined || search.length === 0
-        ? {}
-        : { user: { email: { contains: search, mode: 'insensitive' as const } } }),
-    };
-    const [records, total] = await this.database.$transaction([
-      this.database.providerMembership.findMany({
-        where,
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        skip: (query.page - 1) * query.limit,
-        take: query.limit,
-        include: memberInclude,
-      }),
-      this.database.providerMembership.count({ where }),
-    ]);
-    return {
-      data: records.map((record) => this.mapMember(record)),
-      meta: paginationMeta(query.page, query.limit, total),
-    };
-  }
-
-  async addMember(
-    principal: AuthPrincipal,
-    providerId: string,
-    input: AddProviderMemberDto,
-  ): Promise<ProviderMemberResponseDto> {
-    await this.authorization.authorize(principal, providerId, [ProviderMembershipRole.ADMIN]);
-    try {
-      const member = await this.database.$transaction(async (transaction) => {
-        await this.assertAssignableUser(transaction, input.userId);
-        const existing = await transaction.providerMembership.findUnique({
-          where: { providerId_userId: { providerId, userId: input.userId } },
-        });
-        return existing === null
-          ? transaction.providerMembership.create({
-              data: { providerId, userId: input.userId, role: input.role },
-              include: memberInclude,
-            })
-          : transaction.providerMembership.update({
-              where: { id: existing.id },
-              data: { role: input.role, status: MembershipStatus.ACTIVE },
-              include: memberInclude,
-            });
-      });
-      return this.mapMember(member);
-    } catch (error: unknown) {
-      if (isUniqueConstraintError(error)) {
-        throw conflict('PROVIDER_MEMBERSHIP_EXISTS', 'The provider membership already exists.');
-      }
-      throw error;
-    }
-  }
-
-  async updateMember(
-    principal: AuthPrincipal,
-    providerId: string,
-    membershipId: string,
-    input: UpdateProviderMemberDto,
-  ): Promise<ProviderMemberResponseDto> {
-    const auth = await this.authorization.authorize(principal, providerId, [
-      ProviderMembershipRole.ADMIN,
-    ]);
-    const member = await this.database.$transaction(async (transaction) => {
-      const existing = await transaction.providerMembership.findFirst({
-        where: { id: membershipId, providerId },
-      });
-      if (existing === null) throw resourceNotFound('Membership');
-      if (
-        !auth.isPlatformAdmin &&
-        existing.role === ProviderMembershipRole.ADMIN &&
-        input.role !== ProviderMembershipRole.ADMIN &&
-        existing.status === MembershipStatus.ACTIVE
-      ) {
-        await this.assertAnotherActiveAdmin(transaction, providerId, existing.id);
-      }
-      return transaction.providerMembership.update({
-        where: { id: existing.id },
-        data: { role: input.role },
-        include: memberInclude,
-      });
-    });
-    return this.mapMember(member);
-  }
-
-  async deactivateMember(
-    principal: AuthPrincipal,
-    providerId: string,
-    membershipId: string,
-  ): Promise<void> {
-    const auth = await this.authorization.authorize(principal, providerId, [
-      ProviderMembershipRole.ADMIN,
-    ]);
-    await this.database.$transaction(async (transaction) => {
-      const existing = await transaction.providerMembership.findFirst({
-        where: { id: membershipId, providerId },
-      });
-      if (existing === null) throw resourceNotFound('Membership');
-      if (
-        !auth.isPlatformAdmin &&
-        existing.role === ProviderMembershipRole.ADMIN &&
-        existing.status === MembershipStatus.ACTIVE
-      ) {
-        await this.assertAnotherActiveAdmin(transaction, providerId, existing.id);
-      }
-      await transaction.providerMembership.update({
-        where: { id: existing.id },
-        data: { status: MembershipStatus.INACTIVE },
-      });
-    });
-  }
-
-  async activateMember(
-    principal: AuthPrincipal,
-    providerId: string,
-    membershipId: string,
-  ): Promise<ProviderMemberResponseDto> {
-    await this.authorization.authorize(principal, providerId, [ProviderMembershipRole.ADMIN]);
-    const existing = await this.database.providerMembership.findFirst({
-      where: { id: membershipId, providerId },
-      include: { user: { select: { status: true } } },
-    });
-    if (existing === null) throw resourceNotFound('Membership');
-    if (existing.user.status !== AccountStatus.ACTIVE) {
-      throw invalidOperation('USER_NOT_ACTIVE', 'Only an active account can be assigned access.');
-    }
-    const updated = await this.database.providerMembership.update({
-      where: { id: existing.id },
-      data: { status: MembershipStatus.ACTIVE },
-      include: memberInclude,
-    });
-    return this.mapMember(updated);
   }
 
   private async updateProviderRecord(
@@ -353,41 +209,6 @@ export class ProvidersService {
     return this.mapProvider(provider);
   }
 
-  private async assertAssignableUser(
-    database: Pick<PrismaService, 'user'>,
-    userId: string,
-  ): Promise<void> {
-    const user = await database.user.findUnique({
-      where: { id: userId },
-      select: { status: true },
-    });
-    if (user === null) throw resourceNotFound('User');
-    if (user.status !== AccountStatus.ACTIVE) {
-      throw invalidOperation('USER_NOT_ACTIVE', 'Only an active account can be assigned access.');
-    }
-  }
-
-  private async assertAnotherActiveAdmin(
-    database: Pick<PrismaService, 'providerMembership'>,
-    providerId: string,
-    membershipId: string,
-  ): Promise<void> {
-    const otherAdmins = await database.providerMembership.count({
-      where: {
-        providerId,
-        id: { not: membershipId },
-        role: ProviderMembershipRole.ADMIN,
-        status: MembershipStatus.ACTIVE,
-      },
-    });
-    if (otherAdmins === 0) {
-      throw conflict(
-        'LAST_PROVIDER_ADMIN',
-        'The last active provider administrator cannot be changed or deactivated.',
-      );
-    }
-  }
-
   private assertTimeZone(timezone: string): void {
     try {
       new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format();
@@ -422,24 +243,6 @@ export class ProvidersService {
       ...record,
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
-    };
-  }
-
-  private mapMember(record: {
-    id: string;
-    userId: string;
-    role: ProviderMembershipRole;
-    status: MembershipStatus;
-    createdAt: Date;
-    user: { email: string };
-  }): ProviderMemberResponseDto {
-    return {
-      id: record.id,
-      userId: record.userId,
-      email: record.user.email,
-      role: record.role,
-      status: record.status,
-      createdAt: record.createdAt.toISOString(),
     };
   }
 }
