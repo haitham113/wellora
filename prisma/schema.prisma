@@ -23,6 +23,32 @@ enum OneTimeTokenType {
   EMAIL_VERIFICATION
 }
 
+enum OrganizationStatus {
+  PENDING
+  ACTIVE
+  INACTIVE
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum EmployerMembershipRole {
+  ADMIN
+  EMPLOYEE
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ProviderMembershipRole {
+  ADMIN
+  STAFF
+}
+
 model User {
   id                String        @id @default(uuid()) @db.Uuid
   email             String        @db.VarChar(320)
@@ -35,8 +61,11 @@ model User {
   createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  sessions      AuthSession[]
-  oneTimeTokens OneTimeToken[]
+  sessions            AuthSession[]
+  oneTimeTokens       OneTimeToken[]
+  employerMemberships EmployerMembership[]
+  employeeProfiles    Employee[]
+  providerMemberships ProviderMembership[]
 
   @@index([status])
   @@map("users")
@@ -94,4 +123,113 @@ model OneTimeToken {
 
   @@index([userId, type, createdAt])
   @@map("one_time_tokens")
+}
+
+model Employer {
+  id              String             @id @default(uuid()) @db.Uuid
+  name            String             @db.VarChar(160)
+  slug            String             @db.VarChar(120)
+  normalizedSlug  String             @unique @map("normalized_slug") @db.VarChar(120)
+  status          OrganizationStatus @default(PENDING)
+  country         String             @db.Char(2)
+  timezone        String             @db.VarChar(64)
+  defaultCurrency String             @map("default_currency") @db.Char(3)
+  contactEmail    String?            @map("contact_email") @db.VarChar(320)
+  contactPhone    String?            @map("contact_phone") @db.VarChar(32)
+  websiteUrl      String?            @map("website_url") @db.VarChar(2048)
+  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  memberships EmployerMembership[]
+  employees   Employee[]
+
+  @@index([status, name, id])
+  @@index([country, status])
+  @@map("employers")
+}
+
+model EmployerMembership {
+  id         String                 @id @default(uuid()) @db.Uuid
+  employerId String                 @map("employer_id") @db.Uuid
+  userId     String                 @map("user_id") @db.Uuid
+  role       EmployerMembershipRole
+  status     MembershipStatus       @default(ACTIVE)
+  createdAt  DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  employer Employer @relation(fields: [employerId], references: [id], onDelete: Restrict)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([employerId, userId])
+  @@index([userId, status, role])
+  @@index([employerId, role, status])
+  @@map("employer_memberships")
+}
+
+model Employee {
+  id              String         @id @default(uuid()) @db.Uuid
+  employerId      String         @map("employer_id") @db.Uuid
+  userId          String?        @map("user_id") @db.Uuid
+  email           String         @db.VarChar(320)
+  normalizedEmail String         @map("normalized_email") @db.VarChar(320)
+  firstName       String         @map("first_name") @db.VarChar(100)
+  lastName        String         @map("last_name") @db.VarChar(100)
+  employeeNumber  String?        @map("employee_number") @db.VarChar(80)
+  department      String?        @db.VarChar(120)
+  jobTitle        String?        @map("job_title") @db.VarChar(120)
+  status          EmployeeStatus @default(ACTIVE)
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  employer Employer @relation(fields: [employerId], references: [id], onDelete: Restrict)
+  user     User?    @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([employerId, normalizedEmail])
+  @@unique([employerId, userId])
+  @@unique([employerId, employeeNumber])
+  @@index([employerId, status, lastName, firstName, id])
+  @@index([userId, status])
+  @@index([employerId, department, status])
+  @@map("employees")
+}
+
+model Provider {
+  id                String             @id @default(uuid()) @db.Uuid
+  businessName      String             @map("business_name") @db.VarChar(160)
+  slug              String             @db.VarChar(120)
+  normalizedSlug    String             @unique @map("normalized_slug") @db.VarChar(120)
+  description       String?            @db.Text
+  status            OrganizationStatus @default(PENDING)
+  country           String             @db.Char(2)
+  timezone          String             @db.VarChar(64)
+  contactEmail      String?            @map("contact_email") @db.VarChar(320)
+  contactPhone      String?            @map("contact_phone") @db.VarChar(32)
+  websiteUrl        String?            @map("website_url") @db.VarChar(2048)
+  commissionRateBps Int                @map("commission_rate_bps") @db.SmallInt
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  memberships ProviderMembership[]
+
+  @@index([status, businessName, id])
+  @@index([country, status])
+  @@map("providers")
+}
+
+model ProviderMembership {
+  id         String                 @id @default(uuid()) @db.Uuid
+  providerId String                 @map("provider_id") @db.Uuid
+  userId     String                 @map("user_id") @db.Uuid
+  role       ProviderMembershipRole
+  status     MembershipStatus       @default(ACTIVE)
+  createdAt  DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  provider Provider @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([providerId, userId])
+  @@index([userId, status, role])
+  @@index([providerId, role, status])
+  @@map("provider_memberships")
 }
