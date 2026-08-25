@@ -6,3 +6,92 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+enum AccountStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum PlatformRole {
+  PLATFORM_ADMIN
+}
+
+enum OneTimeTokenType {
+  PASSWORD_RESET
+  EMAIL_VERIFICATION
+}
+
+model User {
+  id                String        @id @default(uuid()) @db.Uuid
+  email             String        @db.VarChar(320)
+  normalizedEmail   String        @unique @map("normalized_email") @db.VarChar(320)
+  passwordHash      String        @map("password_hash") @db.Text
+  status            AccountStatus @default(PENDING_VERIFICATION)
+  platformRole      PlatformRole? @map("platform_role")
+  emailVerifiedAt   DateTime?     @map("email_verified_at") @db.Timestamptz(3)
+  passwordChangedAt DateTime      @default(now()) @map("password_changed_at") @db.Timestamptz(3)
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  sessions      AuthSession[]
+  oneTimeTokens OneTimeToken[]
+
+  @@index([status])
+  @@map("users")
+}
+
+model AuthSession {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  deviceName       String?   @map("device_name") @db.VarChar(120)
+  userAgent        String?   @map("user_agent") @db.VarChar(512)
+  ipHash           String?   @map("ip_hash") @db.Char(64)
+  lastSeenAt       DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(3)
+  revocationReason String?   @map("revocation_reason") @db.VarChar(80)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokens RefreshToken[]
+
+  @@index([userId, revokedAt, expiresAt])
+  @@map("auth_sessions")
+}
+
+model RefreshToken {
+  id                String    @id @default(uuid()) @db.Uuid
+  sessionId         String    @map("session_id") @db.Uuid
+  secretHash        String    @map("secret_hash") @db.Text
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz(3)
+  consumedAt        DateTime? @map("consumed_at") @db.Timestamptz(3)
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(3)
+  replacedByTokenId String?   @unique @map("replaced_by_token_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  session    AuthSession   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  replacedBy RefreshToken? @relation("RefreshTokenRotation", fields: [replacedByTokenId], references: [id], onDelete: SetNull)
+  replaces   RefreshToken? @relation("RefreshTokenRotation")
+
+  @@index([sessionId, revokedAt, expiresAt])
+  @@map("refresh_tokens")
+}
+
+model OneTimeToken {
+  id         String           @id @default(uuid()) @db.Uuid
+  userId     String           @map("user_id") @db.Uuid
+  type       OneTimeTokenType
+  secretHash String           @map("secret_hash") @db.Char(64)
+  expiresAt  DateTime         @map("expires_at") @db.Timestamptz(3)
+  usedAt     DateTime?        @map("used_at") @db.Timestamptz(3)
+  revokedAt  DateTime?        @map("revoked_at") @db.Timestamptz(3)
+  createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type, createdAt])
+  @@map("one_time_tokens")
+}

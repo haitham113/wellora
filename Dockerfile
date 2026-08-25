@@ -13,9 +13,18 @@ COPY src ./src
 
 RUN npm run build
 
+FROM dependencies AS migration
+
+ENV NODE_ENV=production
+
+COPY prisma.config.ts ./
+COPY prisma ./prisma
+
+CMD ["npm", "run", "prisma:migrate:deploy"]
+
 FROM dependencies AS production-dependencies
 
-RUN npm prune --omit=dev
+RUN npm prune --omit=dev --omit=optional
 
 FROM node:24.16.0-alpine3.23 AS runtime
 
