@@ -2,7 +2,7 @@ import { HttpStatus, Injectable } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 
 import { ApplicationException } from '../../common/exceptions/application.exception.js';
-import { AccountStatus } from '../../generated/prisma/enums.js';
+import { AccountStatus, OneTimeTokenType } from '../../generated/prisma/enums.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import { accountUnavailable, invalidCredentials } from './auth-errors.js';
 import type { TokenPairResponseDto } from './dto/auth-response.dto.js';
@@ -40,12 +40,19 @@ export class CredentialsService {
       throw accountUnavailable();
     }
 
+    if (this.passwordHasher.needsRehash(user.passwordHash)) {
+      const upgradedHash = await this.passwordHasher.hash(password);
+      await this.database.user.updateMany({
+        where: { id: user.id, passwordHash: user.passwordHash },
+        data: { passwordHash: upgradedHash },
+      });
+    }
+
     return this.sessions.create(user, metadata);
   }
 
   async changePassword(
     userId: string,
-    currentSessionId: string,
     currentPassword: string,
     newPassword: string,
   ): Promise<void> {
@@ -66,20 +73,45 @@ export class CredentialsService {
 
     const now = new Date();
     const passwordHash = await this.passwordHasher.hash(newPassword);
-    await this.database.$transaction([
-      this.database.user.update({
+    await this.database.$transaction(async (transaction) => {
+      const lockedUsers = await transaction.$queryRaw<
+        { passwordChangedAt: Date; status: AccountStatus }[]
+      >`
+        SELECT "password_changed_at" AS "passwordChangedAt", "status"
+        FROM "users"
+        WHERE "id" = ${userId}::uuid
+        FOR UPDATE
+      `;
+      const lockedUser = lockedUsers[0];
+      if (lockedUser?.passwordChangedAt.getTime() !== user.passwordChangedAt.getTime()) {
+        throw invalidCredentials();
+      }
+      if (lockedUser.status !== AccountStatus.ACTIVE) {
+        throw accountUnavailable();
+      }
+
+      await transaction.user.update({
         where: { id: userId },
         data: { passwordHash, passwordChangedAt: now },
-      }),
-      this.database.authSession.updateMany({
-        where: { userId, id: { not: currentSessionId }, revokedAt: null },
+      });
+      await transaction.authSession.updateMany({
+        where: { userId, revokedAt: null },
         data: { revokedAt: now, revocationReason: 'PASSWORD_CHANGED' },
-      }),
-      this.database.refreshToken.updateMany({
-        where: { session: { userId, id: { not: currentSessionId } }, revokedAt: null },
+      });
+      await transaction.refreshToken.updateMany({
+        where: { session: { userId }, revokedAt: null },
         data: { revokedAt: now },
-      }),
-    ]);
+      });
+      await transaction.oneTimeToken.updateMany({
+        where: {
+          userId,
+          type: OneTimeTokenType.PASSWORD_RESET,
+          usedAt: null,
+          revokedAt: null,
+        },
+        data: { revokedAt: now },
+      });
+    });
   }
 }
 

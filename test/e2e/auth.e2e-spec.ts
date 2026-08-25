@@ -246,10 +246,14 @@ describe('identity API (e2e)', () => {
       .expect(401);
   });
 
-  it('changes a password while retaining only the current session', async () => {
+  it('changes a password and revokes every session and outstanding reset token', async () => {
     const user = await createUser('change-password');
     const current = await login(user.email, originalPassword, 'Current');
     const other = await login(user.email, originalPassword, 'Other');
+    const outstandingReset = await oneTimeTokens.issueForUser(
+      user.id,
+      OneTimeTokenType.PASSWORD_RESET,
+    );
     const newPassword = 'a stronger replacement password';
 
     await request(httpServer)
@@ -260,16 +264,39 @@ describe('identity API (e2e)', () => {
     await request(httpServer)
       .get('/api/v1/me')
       .set('authorization', `Bearer ${current.accessToken}`)
-      .expect(200);
+      .expect(401);
     await request(httpServer)
       .get('/api/v1/me')
       .set('authorization', `Bearer ${other.accessToken}`)
       .expect(401);
     await request(httpServer)
+      .post('/api/v1/auth/refresh')
+      .send({ refreshToken: current.refreshToken })
+      .expect(401);
+    await request(httpServer)
+      .post('/api/v1/auth/reset-password')
+      .send({ token: outstandingReset.token, newPassword: 'stolen reset replacement' })
+      .expect(400);
+    await request(httpServer)
       .post('/api/v1/auth/login')
       .send({ email: user.email, password: originalPassword })
       .expect(401);
     await login(user.email, newPassword);
+  });
+
+  it('rejects whitespace-only replacement passwords', async () => {
+    const user = await createUser('password-policy');
+    const tokens = await login(user.email);
+
+    await request(httpServer)
+      .post('/api/v1/auth/change-password')
+      .set('authorization', `Bearer ${tokens.accessToken}`)
+      .send({ currentPassword: originalPassword, newPassword: ' '.repeat(12) })
+      .expect(400)
+      .expect(({ body }) => {
+        const responseBody = body as { error: { code: string } };
+        expect(responseBody.error.code).toBe('VALIDATION_FAILED');
+      });
   });
 
   it('supports non-enumerating recovery and single-use password reset', async () => {

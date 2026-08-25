@@ -1,13 +1,11 @@
-import {
-  type CanActivate,
-  type ExecutionContext,
-  ForbiddenException,
-  Injectable,
-} from '@nestjs/common';
+import { type CanActivate, type ExecutionContext, HttpStatus, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 
 import { PlatformRole } from '../../generated/prisma/enums.js';
+import { ApplicationException } from '../exceptions/application.exception.js';
+import { AUTHENTICATED_ONLY_KEY } from './authenticated.decorator.js';
 import type { AuthenticatedRequest } from './authenticated-request.js';
+import { IS_PUBLIC_KEY } from './public.decorator.js';
 import { REQUIRED_ROLES_KEY } from './roles.decorator.js';
 import { Role, tenantRoles } from './role.js';
 
@@ -16,18 +14,38 @@ export class RolesGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
+    const targets = [context.getHandler(), context.getClass()];
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, targets);
     const requiredRoles = this.reflector.getAllAndOverride<readonly Role[] | undefined>(
       REQUIRED_ROLES_KEY,
-      [context.getHandler(), context.getClass()],
+      targets,
+    );
+    const authenticatedOnly = this.reflector.getAllAndOverride<boolean>(
+      AUTHENTICATED_ONLY_KEY,
+      targets,
     );
 
-    if (requiredRoles === undefined || requiredRoles.length === 0) {
+    if (isPublic) {
+      if (requiredRoles !== undefined) {
+        throw this.policyMisconfigured();
+      }
       return true;
+    }
+
+    if (requiredRoles === undefined) {
+      if (authenticatedOnly) {
+        return true;
+      }
+      throw this.policyRequired();
+    }
+
+    if (requiredRoles.length === 0) {
+      throw this.policyMisconfigured();
     }
 
     const principal = context.switchToHttp().getRequest<AuthenticatedRequest>().auth;
     if (principal === undefined) {
-      throw new ForbiddenException('Authentication context is required.');
+      throw this.denied();
     }
 
     if (
@@ -38,9 +56,33 @@ export class RolesGuard implements CanActivate {
     }
 
     if (requiredRoles.some((role) => tenantRoles.has(role))) {
-      throw new ForbiddenException('Tenant-scoped authorization is required.');
+      throw this.denied();
     }
 
-    throw new ForbiddenException('The current account does not have the required role.');
+    throw this.denied();
+  }
+
+  private denied(): ApplicationException {
+    return new ApplicationException(HttpStatus.FORBIDDEN, {
+      code: 'AUTHORIZATION_DENIED',
+      message: 'The current account is not permitted to perform this operation.',
+      details: null,
+    });
+  }
+
+  private policyRequired(): ApplicationException {
+    return new ApplicationException(HttpStatus.FORBIDDEN, {
+      code: 'AUTHORIZATION_POLICY_REQUIRED',
+      message: 'This route does not declare an authorization policy.',
+      details: null,
+    });
+  }
+
+  private policyMisconfigured(): ApplicationException {
+    return new ApplicationException(HttpStatus.INTERNAL_SERVER_ERROR, {
+      code: 'AUTHORIZATION_POLICY_MISCONFIGURED',
+      message: 'This route has conflicting authorization metadata.',
+      details: null,
+    });
   }
 }

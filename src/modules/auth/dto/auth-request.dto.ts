@@ -1,5 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsEmail, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+
+const containsNonWhitespace = /\S/u;
 
 export class LoginDto {
   @ApiProperty({ example: 'alex@example.com', format: 'email' })
@@ -39,6 +41,9 @@ export class ChangePasswordDto {
   @IsString()
   @MinLength(12)
   @MaxLength(128)
+  @Matches(containsNonWhitespace, {
+    message: 'newPassword must contain a non-whitespace character',
+  })
   newPassword!: string;
 }
 
@@ -60,6 +65,9 @@ export class ResetPasswordDto {
   @IsString()
   @MinLength(12)
   @MaxLength(128)
+  @Matches(containsNonWhitespace, {
+    message: 'newPassword must contain a non-whitespace character',
+  })
   newPassword!: string;
 }
 

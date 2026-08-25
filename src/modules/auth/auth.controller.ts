@@ -23,6 +23,7 @@ import {
 import type { Request } from 'express';
 
 import type { AuthPrincipal } from '../../common/auth/auth-principal.js';
+import { Authenticated } from '../../common/auth/authenticated.decorator.js';
 import { CurrentPrincipal } from '../../common/auth/current-principal.decorator.js';
 import { Public } from '../../common/auth/public.decorator.js';
 import { ApiErrorResponseDto } from '../../common/exceptions/api-error-response.dto.js';
@@ -47,6 +48,7 @@ import { SessionService } from './session.service.js';
 
 @ApiTags('Authentication')
 @ApiBadRequestResponse({ type: ApiErrorResponseDto, description: 'Request validation failed' })
+@Authenticated()
 @Controller('auth')
 export class AuthController {
   constructor(
@@ -105,8 +107,9 @@ export class AuthController {
 
   @Post('change-password')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @SensitiveRateLimit('change-password')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Change password and revoke all other sessions' })
+  @ApiOperation({ summary: 'Change password and revoke every session and reset token' })
   @ApiNoContentResponse()
   changePassword(
     @CurrentPrincipal() principal: AuthPrincipal,
@@ -114,7 +117,6 @@ export class AuthController {
   ): Promise<void> {
     return this.credentials.changePassword(
       principal.userId,
-      principal.sessionId,
       input.currentPassword,
       input.newPassword,
     );

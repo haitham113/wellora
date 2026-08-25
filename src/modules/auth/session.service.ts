@@ -6,7 +6,7 @@ import type { EnvironmentVariables } from '../../config/environment.schema.js';
 import { AccountStatus, type PlatformRole } from '../../generated/prisma/enums.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import { AccessTokenService } from './access-token.service.js';
-import { accountUnavailable, invalidRefreshToken } from './auth-errors.js';
+import { accountUnavailable, invalidCredentials, invalidRefreshToken } from './auth-errors.js';
 import type { AuthSessionResponseDto, TokenPairResponseDto } from './dto/auth-response.dto.js';
 import { PasswordHasher } from './password-hasher.service.js';
 import type { SessionMetadata } from './session-metadata.service.js';
@@ -17,6 +17,7 @@ interface SessionUser {
   email: string;
   status: AccountStatus;
   platformRole: PlatformRole | null;
+  passwordChangedAt: Date;
 }
 
 @Injectable()
@@ -39,22 +40,41 @@ export class SessionService {
     const refreshToken = this.tokenCodec.generate();
     const secretHash = await this.passwordHasher.hash(refreshToken.secret);
     const expiresAt = this.expiryFromNow();
-    const session = await this.database.authSession.create({
-      data: {
-        userId: user.id,
-        deviceName: metadata.deviceName,
-        userAgent: metadata.userAgent,
-        ipHash: metadata.ipHash,
-        expiresAt,
-        refreshTokens: {
-          create: {
-            id: refreshToken.selector,
-            secretHash,
-            expiresAt,
+    const session = await this.database.$transaction(async (transaction) => {
+      const lockedUsers = await transaction.$queryRaw<
+        { passwordChangedAt: Date; status: AccountStatus }[]
+      >`
+        SELECT "password_changed_at" AS "passwordChangedAt", "status"
+        FROM "users"
+        WHERE "id" = ${user.id}::uuid
+        FOR SHARE
+      `;
+      const lockedUser = lockedUsers[0];
+      if (lockedUser === undefined) {
+        throw invalidCredentials();
+      }
+      this.assertActive(lockedUser.status);
+      if (lockedUser.passwordChangedAt.getTime() !== user.passwordChangedAt.getTime()) {
+        throw invalidCredentials();
+      }
+
+      return transaction.authSession.create({
+        data: {
+          userId: user.id,
+          deviceName: metadata.deviceName,
+          userAgent: metadata.userAgent,
+          ipHash: metadata.ipHash,
+          expiresAt,
+          refreshTokens: {
+            create: {
+              id: refreshToken.selector,
+              secretHash,
+              expiresAt,
+            },
           },
         },
-      },
-      select: { id: true },
+        select: { id: true },
+      });
     });
 
     return this.buildTokenPair(user, session.id, refreshToken.value);

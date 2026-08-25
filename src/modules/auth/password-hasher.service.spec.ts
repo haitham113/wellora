@@ -24,6 +24,7 @@ describe('PasswordHasher', () => {
     expect(first).not.toBe(second);
     await expect(hasher.verify(first, 'a strong portfolio password')).resolves.toBe(true);
     await expect(hasher.verify(first, 'wrong password')).resolves.toBe(false);
+    expect(hasher.needsRehash(first)).toBe(false);
   });
 
   it('treats malformed stored hashes as a failed comparison', async () => {

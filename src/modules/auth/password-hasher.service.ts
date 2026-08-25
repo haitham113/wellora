@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { argon2id, hash, verify } from 'argon2';
+import { argon2id, hash, needsRehash, verify } from 'argon2';
 
 import type { EnvironmentVariables } from '../../config/environment.schema.js';
 
@@ -29,6 +29,14 @@ export class PasswordHasher {
   async verify(hashValue: string, candidate: string): Promise<boolean> {
     try {
       return await verify(hashValue, candidate);
+    } catch {
+      return false;
+    }
+  }
+
+  needsRehash(hashValue: string): boolean {
+    try {
+      return needsRehash(hashValue, this.options);
     } catch {
       return false;
     }

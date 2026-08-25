@@ -9,12 +9,14 @@ import {
 
 import { CurrentPrincipal } from '../../common/auth/current-principal.decorator.js';
 import type { AuthPrincipal } from '../../common/auth/auth-principal.js';
+import { Authenticated } from '../../common/auth/authenticated.decorator.js';
 import { ApiErrorResponseDto } from '../../common/exceptions/api-error-response.dto.js';
 import { UserResponseDto } from './dto/user-response.dto.js';
 import { UsersService } from './users.service.js';
 
 @ApiTags('Users')
 @ApiBearerAuth()
+@Authenticated()
 @Controller('me')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}

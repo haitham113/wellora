@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import type { EnvironmentVariables } from '../../config/environment.schema.js';
 import { AccountStatus, OneTimeTokenType } from '../../generated/prisma/enums.js';
@@ -29,6 +30,7 @@ interface ResolvedOneTimeToken {
 export class OneTimeTokenService {
   private readonly passwordResetTtlSeconds: number;
   private readonly verificationTtlSeconds: number;
+  private readonly publicResponseMinMs: number;
 
   constructor(
     private readonly database: PrismaService,
@@ -40,36 +42,41 @@ export class OneTimeTokenService {
     this.verificationTtlSeconds = config.get('EMAIL_VERIFICATION_TTL_SECONDS', {
       infer: true,
     });
+    this.publicResponseMinMs = config.get('AUTH_PUBLIC_RESPONSE_MIN_MS', { infer: true });
   }
 
   async requestPasswordReset(email: string): Promise<void> {
-    const user = await this.database.user.findUnique({
-      where: { normalizedEmail: normalizeEmail(email) },
-      select: { id: true, status: true },
-    });
-    if (user === null) {
-      return;
-    }
-    if (user.status === AccountStatus.DEACTIVATED) {
-      return;
-    }
+    const startedAt = Date.now();
+    try {
+      const user = await this.database.user.findUnique({
+        where: { normalizedEmail: normalizeEmail(email) },
+        select: { id: true, status: true },
+      });
+      if (user === null || user.status === AccountStatus.DEACTIVATED) {
+        return;
+      }
 
-    await this.issueForUser(user.id, OneTimeTokenType.PASSWORD_RESET);
+      await this.issueForUser(user.id, OneTimeTokenType.PASSWORD_RESET);
+    } finally {
+      await this.enforcePublicResponseFloor(startedAt);
+    }
   }
 
   async requestEmailVerification(email: string): Promise<void> {
-    const user = await this.database.user.findUnique({
-      where: { normalizedEmail: normalizeEmail(email) },
-      select: { id: true, status: true, emailVerifiedAt: true },
-    });
-    if (user === null) {
-      return;
-    }
-    if (user.status !== AccountStatus.PENDING_VERIFICATION || user.emailVerifiedAt !== null) {
-      return;
-    }
+    const startedAt = Date.now();
+    try {
+      const user = await this.database.user.findUnique({
+        where: { normalizedEmail: normalizeEmail(email) },
+        select: { id: true, status: true, emailVerifiedAt: true },
+      });
+      if (user?.status !== AccountStatus.PENDING_VERIFICATION || user.emailVerifiedAt !== null) {
+        return;
+      }
 
-    await this.issueForUser(user.id, OneTimeTokenType.EMAIL_VERIFICATION);
+      await this.issueForUser(user.id, OneTimeTokenType.EMAIL_VERIFICATION);
+    } finally {
+      await this.enforcePublicResponseFloor(startedAt);
+    }
   }
 
   async issueForUser(userId: string, type: OneTimeTokenType): Promise<IssuedOneTimeToken> {
@@ -81,12 +88,22 @@ export class OneTimeTokenService {
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
     const now = new Date();
 
-    await this.database.$transaction([
-      this.database.oneTimeToken.updateMany({
+    await this.database.$transaction(async (transaction) => {
+      const lockedUsers = await transaction.$queryRaw<{ id: string }[]>`
+        SELECT "id"
+        FROM "users"
+        WHERE "id" = ${userId}::uuid
+        FOR UPDATE
+      `;
+      if (lockedUsers.length !== 1) {
+        throw invalidOneTimeToken();
+      }
+
+      await transaction.oneTimeToken.updateMany({
         where: { userId, type, usedAt: null, revokedAt: null },
         data: { revokedAt: now },
-      }),
-      this.database.oneTimeToken.create({
+      });
+      await transaction.oneTimeToken.create({
         data: {
           id: generated.selector,
           userId,
@@ -94,8 +111,8 @@ export class OneTimeTokenService {
           secretHash: this.tokenCodec.digest(generated.secret),
           expiresAt,
         },
-      }),
-    ]);
+      });
+    });
 
     return { userId, token: generated.value, expiresAt, type };
   }
@@ -112,6 +129,16 @@ export class OneTimeTokenService {
     const now = new Date();
     const passwordHash = await this.passwordHasher.hash(newPassword);
     const result = await this.database.$transaction(async (transaction) => {
+      const lockedUsers = await transaction.$queryRaw<{ status: AccountStatus }[]>`
+        SELECT "status"
+        FROM "users"
+        WHERE "id" = ${resolved.userId}::uuid
+        FOR UPDATE
+      `;
+      if (lockedUsers[0]?.status === AccountStatus.DEACTIVATED) {
+        throw accountUnavailable();
+      }
+
       const consumed = await transaction.oneTimeToken.updateMany({
         where: {
           id: resolved.id,
@@ -138,6 +165,15 @@ export class OneTimeTokenService {
         where: { session: { userId: resolved.userId }, revokedAt: null },
         data: { revokedAt: now },
       });
+      await transaction.oneTimeToken.updateMany({
+        where: {
+          userId: resolved.userId,
+          type: OneTimeTokenType.PASSWORD_RESET,
+          usedAt: null,
+          revokedAt: null,
+        },
+        data: { revokedAt: now },
+      });
       return true;
     });
 
@@ -154,6 +190,16 @@ export class OneTimeTokenService {
 
     const now = new Date();
     const consumed = await this.database.$transaction(async (transaction) => {
+      const lockedUsers = await transaction.$queryRaw<{ status: AccountStatus }[]>`
+        SELECT "status"
+        FROM "users"
+        WHERE "id" = ${resolved.userId}::uuid
+        FOR UPDATE
+      `;
+      if (lockedUsers[0]?.status === AccountStatus.DEACTIVATED) {
+        throw accountUnavailable();
+      }
+
       const result = await transaction.oneTimeToken.updateMany({
         where: {
           id: resolved.id,
@@ -209,5 +255,12 @@ export class OneTimeTokenService {
     }
 
     return token;
+  }
+
+  private async enforcePublicResponseFloor(startedAt: number): Promise<void> {
+    const remainingMs = this.publicResponseMinMs - (Date.now() - startedAt);
+    if (remainingMs > 0) {
+      await delay(remainingMs);
+    }
   }
 }

@@ -37,6 +37,7 @@ describe('RateLimitGuard', () => {
     get: jest.fn((key: keyof EnvironmentVariables) => {
       const values = {
         AUTH_RATE_LIMIT_MAX: 2,
+        AUTH_RATE_LIMIT_IP_MAX: 100,
         AUTH_RATE_LIMIT_WINDOW_SECONDS: 60,
         AUTH_METADATA_SECRET: 'test-auth-metadata-secret-at-least-32-characters',
       };
@@ -44,6 +45,7 @@ describe('RateLimitGuard', () => {
     }),
   } as unknown as ConfigService<EnvironmentVariables, true>;
   beforeEach(() => {
+    consume.mockReset();
     consume.mockResolvedValue({ count: 1, ttlSeconds: 60 });
   });
 
@@ -55,15 +57,22 @@ describe('RateLimitGuard', () => {
     ).resolves.toBe(true);
 
     expect(consume).toHaveBeenCalledWith(
-      expect.stringMatching(/^wellora:auth-rate:login:[a-f0-9]{64}$/),
+      expect.stringMatching(/^wellora:auth-rate:login:ip:[a-f0-9]{64}$/),
       60,
     );
-    expect(consume.mock.calls[0]?.[0]).not.toContain('127.0.0.1');
+    expect(consume).toHaveBeenCalledWith(
+      expect.stringMatching(/^wellora:auth-rate:login:subject:[a-f0-9]{64}$/),
+      60,
+    );
+    expect(consume).toHaveBeenCalledTimes(2);
+    expect(consume.mock.calls.flat()).not.toContain('127.0.0.1');
     expect(setHeader).toHaveBeenCalledWith('X-RateLimit-Remaining', 1);
   });
 
   it('rejects requests over the distributed limit', async () => {
-    consume.mockResolvedValue({ count: 3, ttlSeconds: 41 });
+    consume
+      .mockResolvedValueOnce({ count: 1, ttlSeconds: 60 })
+      .mockResolvedValueOnce({ count: 3, ttlSeconds: 41 });
 
     await expect(
       new RateLimitGuard(reflector, redis, config).canActivate(createContext(jest.fn())),

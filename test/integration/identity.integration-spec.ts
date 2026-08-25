@@ -138,6 +138,82 @@ describe('identity persistence (integration)', () => {
     expect(revokedSession.revokedAt).toBeInstanceOf(Date);
   });
 
+  it('rejects session creation from a credential snapshot changed while issuance waits', async () => {
+    const user = await createUser('credential-race');
+    const nextPasswordHash = await passwordHasher.hash('replacement credential after race');
+    let releaseUserLock: (() => void) | undefined;
+    let signalUserLocked: (() => void) | undefined;
+    const userLocked = new Promise<void>((resolve) => {
+      signalUserLocked = resolve;
+    });
+    const lockReleased = new Promise<void>((resolve) => {
+      releaseUserLock = resolve;
+    });
+    const credentialChange = database.$transaction(async (transaction) => {
+      await transaction.$queryRaw`
+        SELECT "id" FROM "users" WHERE "id" = ${user.id}::uuid FOR UPDATE
+      `;
+      signalUserLocked?.();
+      await lockReleased;
+      await transaction.user.update({
+        where: { id: user.id },
+        data: {
+          passwordHash: nextPasswordHash,
+          passwordChangedAt: new Date(user.passwordChangedAt.getTime() + 1000),
+        },
+      });
+    });
+    await userLocked;
+
+    const sessionAttempt = sessions.create(user, metadata);
+    const sessionAssertion = expect(sessionAttempt).rejects.toMatchObject({
+      response: { code: 'INVALID_CREDENTIALS' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    releaseUserLock?.();
+    await credentialChange;
+
+    await sessionAssertion;
+    await expect(database.authSession.count({ where: { userId: user.id } })).resolves.toBe(0);
+  });
+
+  it('serializes one-time-token issuance and preserves only one active token', async () => {
+    const user = await createUser('one-time-race');
+    const issued = await Promise.all([
+      oneTimeTokens.issueForUser(user.id, OneTimeTokenType.PASSWORD_RESET),
+      oneTimeTokens.issueForUser(user.id, OneTimeTokenType.PASSWORD_RESET),
+    ]);
+    const stored = await database.oneTimeToken.findMany({
+      where: { userId: user.id, type: OneTimeTokenType.PASSWORD_RESET },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    expect(stored).toHaveLength(2);
+    expect(
+      stored.filter((token) => token.usedAt === null && token.revokedAt === null),
+    ).toHaveLength(1);
+    const active = stored.find((token) => token.usedAt === null && token.revokedAt === null);
+    if (active === undefined) {
+      throw new Error('Expected one stored token to remain active.');
+    }
+    const activeIssued = issued.find((token) => token.token.startsWith(`${active.id}.`));
+    if (activeIssued === undefined) {
+      throw new Error('Expected one issued token to remain active.');
+    }
+
+    await oneTimeTokens.resetPassword(activeIssued.token, 'new password after issuance race');
+    await expect(
+      database.oneTimeToken.count({
+        where: {
+          userId: user.id,
+          type: OneTimeTokenType.PASSWORD_RESET,
+          usedAt: null,
+          revokedAt: null,
+        },
+      }),
+    ).resolves.toBe(0);
+  });
+
   it('consumes password reset tokens once and revokes every active session', async () => {
     const user = await createUser('reset');
     await sessions.create(user, metadata);
