@@ -117,7 +117,9 @@ export class EmployersController {
   }
 
   @Post('admins')
-  @ApiOperation({ summary: 'Assign or reactivate an employer administrator' })
+  @ApiOperation({
+    summary: 'Reactivate an employer administrator or assign one as a platform admin',
+  })
   @ApiCreatedResponse({ type: EmployerAdminResponseDto })
   @ApiConflictResponse({ type: ApiErrorResponseDto })
   addAdmin(
@@ -164,7 +166,9 @@ export class EmployersController {
   }
 
   @Post('employees')
-  @ApiOperation({ summary: 'Create an employee in the authorized employer' })
+  @ApiOperation({
+    summary: 'Create an employee; direct account linking requires platform-admin authority',
+  })
   @ApiCreatedResponse({ type: EmployeeResponseDto })
   @ApiConflictResponse({ type: ApiErrorResponseDto })
   createEmployee(

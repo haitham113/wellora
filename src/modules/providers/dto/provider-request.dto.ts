@@ -110,7 +110,11 @@ export class ProviderListQueryDto extends PageQueryDto {
 }
 
 export class AddProviderMemberDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({
+    format: 'uuid',
+    description:
+      'Existing membership in this provider, or an active global account when called by a platform admin',
+  })
   @IsUUID('4')
   userId!: string;
 

@@ -8,12 +8,14 @@ import {
   ProviderMembershipRole,
 } from '../../generated/prisma/enums.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
-import { authorizationDenied } from '../organizations/organization-errors.js';
+import { authorizationDenied, resourceNotFound } from '../organizations/organization-errors.js';
 
 export interface ProviderAuthorization {
   isPlatformAdmin: boolean;
   role: ProviderMembershipRole | null;
 }
+
+type ProviderAuthorizationDatabase = Pick<PrismaService, 'provider' | 'providerMembership'>;
 
 @Injectable()
 export class ProviderAuthorizationPolicy {
@@ -23,12 +25,18 @@ export class ProviderAuthorizationPolicy {
     principal: AuthPrincipal,
     providerId: string,
     roles: readonly ProviderMembershipRole[],
+    database: ProviderAuthorizationDatabase = this.database,
   ): Promise<ProviderAuthorization> {
     if (principal.platformRole === PlatformRole.PLATFORM_ADMIN) {
+      const provider = await database.provider.findUnique({
+        where: { id: providerId },
+        select: { id: true },
+      });
+      if (provider === null) throw resourceNotFound('Provider');
       return { isPlatformAdmin: true, role: null };
     }
 
-    const membership = await this.database.providerMembership.findUnique({
+    const membership = await database.providerMembership.findUnique({
       where: { providerId_userId: { providerId, userId: principal.userId } },
       select: {
         role: true,

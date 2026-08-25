@@ -9,6 +9,7 @@ import {
 } from '../../generated/prisma/enums.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import {
+  authorizationDenied,
   conflict,
   invalidOperation,
   isUniqueConstraintError,
@@ -63,9 +64,39 @@ export class EmployerAdminsService {
     employerId: string,
     input: AddEmployerAdminDto,
   ): Promise<EmployerAdminResponseDto> {
-    await this.authorization.authorize(principal, employerId, [EmployerMembershipRole.ADMIN]);
     try {
       const membership = await this.database.$transaction(async (transaction) => {
+        const auth = await this.authorization.authorize(
+          principal,
+          employerId,
+          [EmployerMembershipRole.ADMIN],
+          transaction,
+        );
+        const existing = await transaction.employerMembership.findUnique({
+          where: { employerId_userId: { employerId, userId: input.userId } },
+          include: { user: { select: { email: true, status: true } } },
+        });
+        if (existing !== null) {
+          if (existing.role === EmployerMembershipRole.EMPLOYEE) {
+            throw conflict(
+              'EMPLOYER_MEMBERSHIP_ROLE_CONFLICT',
+              'The account already has a different role in this employer.',
+            );
+          }
+          if (existing.user.status !== AccountStatus.ACTIVE) {
+            throw invalidOperation(
+              'USER_NOT_ACTIVE',
+              'Only an active account can be assigned access.',
+            );
+          }
+          return transaction.employerMembership.update({
+            where: { id: existing.id, employerId, role: EmployerMembershipRole.ADMIN },
+            data: { status: MembershipStatus.ACTIVE },
+            include: { user: { select: { email: true } } },
+          });
+        }
+        if (!auth.isPlatformAdmin) throw authorizationDenied();
+
         const user = await transaction.user.findUnique({
           where: { id: input.userId },
           select: { status: true },
@@ -77,25 +108,10 @@ export class EmployerAdminsService {
             'Only an active account can be assigned access.',
           );
         }
-        const existing = await transaction.employerMembership.findUnique({
-          where: { employerId_userId: { employerId, userId: input.userId } },
+        return transaction.employerMembership.create({
+          data: { employerId, userId: input.userId, role: EmployerMembershipRole.ADMIN },
+          include: { user: { select: { email: true } } },
         });
-        if (existing?.role === EmployerMembershipRole.EMPLOYEE) {
-          throw conflict(
-            'EMPLOYER_MEMBERSHIP_ROLE_CONFLICT',
-            'The account already has a different role in this employer.',
-          );
-        }
-        return existing === null
-          ? transaction.employerMembership.create({
-              data: { employerId, userId: input.userId, role: EmployerMembershipRole.ADMIN },
-              include: { user: { select: { email: true } } },
-            })
-          : transaction.employerMembership.update({
-              where: { id: existing.id },
-              data: { status: MembershipStatus.ACTIVE },
-              include: { user: { select: { email: true } } },
-            });
       });
       return this.mapAdmin(membership);
     } catch (error: unknown) {
@@ -111,10 +127,13 @@ export class EmployerAdminsService {
     employerId: string,
     membershipId: string,
   ): Promise<void> {
-    const auth = await this.authorization.authorize(principal, employerId, [
-      EmployerMembershipRole.ADMIN,
-    ]);
     await this.database.$transaction(async (transaction) => {
+      const auth = await this.authorization.authorize(
+        principal,
+        employerId,
+        [EmployerMembershipRole.ADMIN],
+        transaction,
+      );
       const membership = await transaction.employerMembership.findFirst({
         where: { id: membershipId, employerId, role: EmployerMembershipRole.ADMIN },
       });
@@ -135,7 +154,7 @@ export class EmployerAdminsService {
         }
       }
       await transaction.employerMembership.update({
-        where: { id: membership.id },
+        where: { id: membership.id, employerId, role: EmployerMembershipRole.ADMIN },
         data: { status: MembershipStatus.INACTIVE },
       });
     });
@@ -146,19 +165,26 @@ export class EmployerAdminsService {
     employerId: string,
     membershipId: string,
   ): Promise<EmployerAdminResponseDto> {
-    await this.authorization.authorize(principal, employerId, [EmployerMembershipRole.ADMIN]);
-    const membership = await this.database.employerMembership.findFirst({
-      where: { id: membershipId, employerId, role: EmployerMembershipRole.ADMIN },
-      include: { user: { select: { email: true, status: true } } },
-    });
-    if (membership === null) throw resourceNotFound('Membership');
-    if (membership.user.status !== AccountStatus.ACTIVE) {
-      throw invalidOperation('USER_NOT_ACTIVE', 'Only an active account can be assigned access.');
-    }
-    const updated = await this.database.employerMembership.update({
-      where: { id: membership.id },
-      data: { status: MembershipStatus.ACTIVE },
-      include: { user: { select: { email: true } } },
+    const updated = await this.database.$transaction(async (transaction) => {
+      await this.authorization.authorize(
+        principal,
+        employerId,
+        [EmployerMembershipRole.ADMIN],
+        transaction,
+      );
+      const membership = await transaction.employerMembership.findFirst({
+        where: { id: membershipId, employerId, role: EmployerMembershipRole.ADMIN },
+        include: { user: { select: { email: true, status: true } } },
+      });
+      if (membership === null) throw resourceNotFound('Membership');
+      if (membership.user.status !== AccountStatus.ACTIVE) {
+        throw invalidOperation('USER_NOT_ACTIVE', 'Only an active account can be assigned access.');
+      }
+      return transaction.employerMembership.update({
+        where: { id: membership.id, employerId, role: EmployerMembershipRole.ADMIN },
+        data: { status: MembershipStatus.ACTIVE },
+        include: { user: { select: { email: true } } },
+      });
     });
     return this.mapAdmin(updated);
   }

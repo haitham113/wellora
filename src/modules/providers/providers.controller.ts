@@ -87,7 +87,9 @@ export class ProvidersController {
   }
 
   @Post('members')
-  @ApiOperation({ summary: 'Assign or reactivate provider administrator/staff access' })
+  @ApiOperation({
+    summary: 'Manage an existing provider member or assign one as a platform admin',
+  })
   @ApiCreatedResponse({ type: ProviderMemberResponseDto })
   @ApiConflictResponse({ type: ApiErrorResponseDto })
   addMember(

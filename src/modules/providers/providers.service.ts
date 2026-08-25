@@ -40,6 +40,8 @@ const providerSelect = {
   updatedAt: true,
 } as const;
 
+type ProviderRecordDatabase = Pick<PrismaService, 'provider'>;
+
 @Injectable()
 export class ProvidersService {
   constructor(
@@ -162,22 +164,30 @@ export class ProvidersService {
     providerId: string,
     input: TenantUpdateProviderDto,
   ): Promise<ProviderResponseDto> {
-    await this.authorization.authorize(principal, providerId, [ProviderMembershipRole.ADMIN]);
     if (input.timezone !== undefined) this.assertTimeZone(input.timezone);
-    return this.updateProviderRecord(providerId, input);
+    return this.database.$transaction(async (transaction) => {
+      await this.authorization.authorize(
+        principal,
+        providerId,
+        [ProviderMembershipRole.ADMIN],
+        transaction,
+      );
+      return this.updateProviderRecord(providerId, input, transaction);
+    });
   }
 
   private async updateProviderRecord(
     providerId: string,
     input: AdminUpdateProviderDto | TenantUpdateProviderDto,
+    database: ProviderRecordDatabase = this.database,
   ): Promise<ProviderResponseDto> {
-    const existing = await this.database.provider.findUnique({
+    const existing = await database.provider.findUnique({
       where: { id: providerId },
       select: { id: true },
     });
     if (existing === null) throw resourceNotFound('Provider');
     try {
-      const provider = await this.database.provider.update({
+      const provider = await database.provider.update({
         where: { id: providerId },
         data: {
           ...(input.businessName === undefined ? {} : { businessName: input.businessName.trim() }),

@@ -12,19 +12,37 @@ const principal: AuthPrincipal = { userId: 'user-a', sessionId: 'session', platf
 
 describe('EmployerAuthorizationPolicy', () => {
   const findUnique = jest.fn();
+  const findEmployer = jest.fn();
   const policy = new EmployerAuthorizationPolicy({
+    employer: { findUnique: findEmployer },
     employerMembership: { findUnique },
   } as unknown as PrismaService);
 
-  beforeEach(() => findUnique.mockReset());
+  beforeEach(() => {
+    findUnique.mockReset();
+    findEmployer.mockReset().mockResolvedValue({ id: 'employer-a' });
+  });
 
-  it('allows an explicit platform-admin bypass without trusting a tenant membership', async () => {
+  it('allows platform-admin access only after validating the tenant exists', async () => {
     await expect(
       policy.authorize({ ...principal, platformRole: PlatformRole.PLATFORM_ADMIN }, 'employer-a', [
         EmployerMembershipRole.ADMIN,
       ]),
     ).resolves.toEqual({ isPlatformAdmin: true, role: null });
     expect(findUnique).not.toHaveBeenCalled();
+    expect(findEmployer).toHaveBeenCalledWith({
+      where: { id: 'employer-a' },
+      select: { id: true },
+    });
+  });
+
+  it('returns not found when a platform admin supplies an unknown tenant', async () => {
+    findEmployer.mockResolvedValue(null);
+    await expect(
+      policy.authorize({ ...principal, platformRole: PlatformRole.PLATFORM_ADMIN }, 'employer-x', [
+        EmployerMembershipRole.ADMIN,
+      ]),
+    ).rejects.toMatchObject({ response: { code: 'EMPLOYER_NOT_FOUND' } });
   });
 
   it('allows only a current role on an active membership and employer', async () => {

@@ -44,6 +44,8 @@ const employerSelect = {
   updatedAt: true,
 } as const;
 
+type EmployerRecordDatabase = Pick<PrismaService, 'employer'>;
+
 @Injectable()
 export class EmployersService {
   constructor(
@@ -165,8 +167,15 @@ export class EmployersService {
     employerId: string,
     input: TenantUpdateEmployerDto,
   ): Promise<EmployerResponseDto> {
-    await this.authorization.authorize(principal, employerId, [EmployerMembershipRole.ADMIN]);
-    return this.updateEmployerRecord(employerId, input);
+    return this.database.$transaction(async (transaction) => {
+      await this.authorization.authorize(
+        principal,
+        employerId,
+        [EmployerMembershipRole.ADMIN],
+        transaction,
+      );
+      return this.updateEmployerRecord(employerId, input, transaction);
+    });
   }
 
   async getSettings(
@@ -194,19 +203,26 @@ export class EmployersService {
     employerId: string,
     input: UpdateEmployerSettingsDto,
   ): Promise<EmployerSettingsResponseDto> {
-    await this.authorization.authorize(principal, employerId, [EmployerMembershipRole.ADMIN]);
     if (input.timezone !== undefined) this.assertTimeZone(input.timezone);
-    const employer = await this.database.employer.update({
-      where: { id: employerId },
-      data: input,
-      select: {
-        id: true,
-        timezone: true,
-        defaultCurrency: true,
-        contactEmail: true,
-        contactPhone: true,
-        websiteUrl: true,
-      },
+    const employer = await this.database.$transaction(async (transaction) => {
+      await this.authorization.authorize(
+        principal,
+        employerId,
+        [EmployerMembershipRole.ADMIN],
+        transaction,
+      );
+      return transaction.employer.update({
+        where: { id: employerId },
+        data: input,
+        select: {
+          id: true,
+          timezone: true,
+          defaultCurrency: true,
+          contactEmail: true,
+          contactPhone: true,
+          websiteUrl: true,
+        },
+      });
     });
     return this.mapSettings(employer);
   }
@@ -223,14 +239,15 @@ export class EmployersService {
   private async updateEmployerRecord(
     employerId: string,
     input: AdminUpdateEmployerDto | TenantUpdateEmployerDto,
+    database: EmployerRecordDatabase = this.database,
   ): Promise<EmployerResponseDto> {
-    const existing = await this.database.employer.findUnique({
+    const existing = await database.employer.findUnique({
       where: { id: employerId },
       select: { id: true },
     });
     if (existing === null) throw resourceNotFound('Employer');
     try {
-      const employer = await this.database.employer.update({
+      const employer = await database.employer.update({
         where: { id: employerId },
         data: {
           ...(input.name === undefined ? {} : { name: input.name.trim() }),

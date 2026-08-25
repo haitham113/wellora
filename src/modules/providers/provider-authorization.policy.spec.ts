@@ -12,19 +12,37 @@ const principal: AuthPrincipal = { userId: 'user-a', sessionId: 'session', platf
 
 describe('ProviderAuthorizationPolicy', () => {
   const findUnique = jest.fn();
+  const findProvider = jest.fn();
   const policy = new ProviderAuthorizationPolicy({
+    provider: { findUnique: findProvider },
     providerMembership: { findUnique },
   } as unknown as PrismaService);
 
-  beforeEach(() => findUnique.mockReset());
+  beforeEach(() => {
+    findUnique.mockReset();
+    findProvider.mockReset().mockResolvedValue({ id: 'provider-a' });
+  });
 
-  it('allows an explicit platform-admin bypass', async () => {
+  it('allows platform-admin access only after validating the tenant exists', async () => {
     await expect(
       policy.authorize({ ...principal, platformRole: PlatformRole.PLATFORM_ADMIN }, 'provider-a', [
         ProviderMembershipRole.ADMIN,
       ]),
     ).resolves.toEqual({ isPlatformAdmin: true, role: null });
     expect(findUnique).not.toHaveBeenCalled();
+    expect(findProvider).toHaveBeenCalledWith({
+      where: { id: 'provider-a' },
+      select: { id: true },
+    });
+  });
+
+  it('returns not found when a platform admin supplies an unknown tenant', async () => {
+    findProvider.mockResolvedValue(null);
+    await expect(
+      policy.authorize({ ...principal, platformRole: PlatformRole.PLATFORM_ADMIN }, 'provider-x', [
+        ProviderMembershipRole.ADMIN,
+      ]),
+    ).rejects.toMatchObject({ response: { code: 'PROVIDER_NOT_FOUND' } });
   });
 
   it('allows staff only when the requested permission includes staff', async () => {

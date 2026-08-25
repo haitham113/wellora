@@ -146,7 +146,11 @@ export class EmployerListQueryDto extends PageQueryDto {
 }
 
 export class AddEmployerAdminDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({
+    format: 'uuid',
+    description:
+      'Existing membership in this employer, or an active global account when called by a platform admin',
+  })
   @IsUUID('4')
   userId!: string;
 }
@@ -195,7 +199,11 @@ export class CreateEmployeeDto {
   @MaxLength(120)
   jobTitle?: string;
 
-  @ApiPropertyOptional({ format: 'uuid', description: 'Existing account to link' })
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description:
+      'Existing account to link; direct global-account linking requires platform-admin authority',
+  })
   @IsOptional()
   @IsUUID('4')
   userId?: string;

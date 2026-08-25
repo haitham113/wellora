@@ -9,6 +9,7 @@ import {
 } from '../../generated/prisma/enums.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import {
+  authorizationDenied,
   conflict,
   invalidOperation,
   isUniqueConstraintError,
@@ -70,9 +71,33 @@ export class ProviderMembersService {
     providerId: string,
     input: AddProviderMemberDto,
   ): Promise<ProviderMemberResponseDto> {
-    await this.authorization.authorize(principal, providerId, [ProviderMembershipRole.ADMIN]);
     try {
       const member = await this.database.$transaction(async (transaction) => {
+        const auth = await this.authorization.authorize(
+          principal,
+          providerId,
+          [ProviderMembershipRole.ADMIN],
+          transaction,
+        );
+        const existing = await transaction.providerMembership.findUnique({
+          where: { providerId_userId: { providerId, userId: input.userId } },
+          include: { user: { select: { status: true } } },
+        });
+        if (existing !== null) {
+          if (existing.user.status !== AccountStatus.ACTIVE) {
+            throw invalidOperation(
+              'USER_NOT_ACTIVE',
+              'Only an active account can be assigned access.',
+            );
+          }
+          return transaction.providerMembership.update({
+            where: { id: existing.id, providerId },
+            data: { role: input.role, status: MembershipStatus.ACTIVE },
+            include: memberInclude,
+          });
+        }
+        if (!auth.isPlatformAdmin) throw authorizationDenied();
+
         const user = await transaction.user.findUnique({
           where: { id: input.userId },
           select: { status: true },
@@ -84,19 +109,10 @@ export class ProviderMembersService {
             'Only an active account can be assigned access.',
           );
         }
-        const existing = await transaction.providerMembership.findUnique({
-          where: { providerId_userId: { providerId, userId: input.userId } },
+        return transaction.providerMembership.create({
+          data: { providerId, userId: input.userId, role: input.role },
+          include: memberInclude,
         });
-        return existing === null
-          ? transaction.providerMembership.create({
-              data: { providerId, userId: input.userId, role: input.role },
-              include: memberInclude,
-            })
-          : transaction.providerMembership.update({
-              where: { id: existing.id },
-              data: { role: input.role, status: MembershipStatus.ACTIVE },
-              include: memberInclude,
-            });
       });
       return this.mapMember(member);
     } catch (error: unknown) {
@@ -113,10 +129,13 @@ export class ProviderMembersService {
     membershipId: string,
     input: UpdateProviderMemberDto,
   ): Promise<ProviderMemberResponseDto> {
-    const auth = await this.authorization.authorize(principal, providerId, [
-      ProviderMembershipRole.ADMIN,
-    ]);
     const member = await this.database.$transaction(async (transaction) => {
+      const auth = await this.authorization.authorize(
+        principal,
+        providerId,
+        [ProviderMembershipRole.ADMIN],
+        transaction,
+      );
       const existing = await transaction.providerMembership.findFirst({
         where: { id: membershipId, providerId },
       });
@@ -130,7 +149,7 @@ export class ProviderMembersService {
         await this.assertAnotherActiveAdmin(transaction, providerId, existing.id);
       }
       return transaction.providerMembership.update({
-        where: { id: existing.id },
+        where: { id: existing.id, providerId },
         data: { role: input.role },
         include: memberInclude,
       });
@@ -143,10 +162,13 @@ export class ProviderMembersService {
     providerId: string,
     membershipId: string,
   ): Promise<void> {
-    const auth = await this.authorization.authorize(principal, providerId, [
-      ProviderMembershipRole.ADMIN,
-    ]);
     await this.database.$transaction(async (transaction) => {
+      const auth = await this.authorization.authorize(
+        principal,
+        providerId,
+        [ProviderMembershipRole.ADMIN],
+        transaction,
+      );
       const existing = await transaction.providerMembership.findFirst({
         where: { id: membershipId, providerId },
       });
@@ -159,7 +181,7 @@ export class ProviderMembersService {
         await this.assertAnotherActiveAdmin(transaction, providerId, existing.id);
       }
       await transaction.providerMembership.update({
-        where: { id: existing.id },
+        where: { id: existing.id, providerId },
         data: { status: MembershipStatus.INACTIVE },
       });
     });
@@ -170,19 +192,26 @@ export class ProviderMembersService {
     providerId: string,
     membershipId: string,
   ): Promise<ProviderMemberResponseDto> {
-    await this.authorization.authorize(principal, providerId, [ProviderMembershipRole.ADMIN]);
-    const existing = await this.database.providerMembership.findFirst({
-      where: { id: membershipId, providerId },
-      include: { user: { select: { status: true } } },
-    });
-    if (existing === null) throw resourceNotFound('Membership');
-    if (existing.user.status !== AccountStatus.ACTIVE) {
-      throw invalidOperation('USER_NOT_ACTIVE', 'Only an active account can be assigned access.');
-    }
-    const updated = await this.database.providerMembership.update({
-      where: { id: existing.id },
-      data: { status: MembershipStatus.ACTIVE },
-      include: memberInclude,
+    const updated = await this.database.$transaction(async (transaction) => {
+      await this.authorization.authorize(
+        principal,
+        providerId,
+        [ProviderMembershipRole.ADMIN],
+        transaction,
+      );
+      const existing = await transaction.providerMembership.findFirst({
+        where: { id: membershipId, providerId },
+        include: { user: { select: { status: true } } },
+      });
+      if (existing === null) throw resourceNotFound('Membership');
+      if (existing.user.status !== AccountStatus.ACTIVE) {
+        throw invalidOperation('USER_NOT_ACTIVE', 'Only an active account can be assigned access.');
+      }
+      return transaction.providerMembership.update({
+        where: { id: existing.id, providerId },
+        data: { status: MembershipStatus.ACTIVE },
+        include: memberInclude,
+      });
     });
     return this.mapMember(updated);
   }

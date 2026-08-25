@@ -11,6 +11,7 @@ import {
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import { normalizeEmail } from '../auth/credentials.service.js';
 import {
+  authorizationDenied,
   conflict,
   invalidOperation,
   isUniqueConstraintError,
@@ -91,11 +92,17 @@ export class EmployeesService {
     employerId: string,
     input: CreateEmployeeDto,
   ): Promise<EmployeeResponseDto> {
-    await this.authorization.authorize(principal, employerId, [EmployerMembershipRole.ADMIN]);
     const normalizedEmail = normalizeEmail(input.email);
     try {
       const employee = await this.database.$transaction(async (transaction) => {
+        const auth = await this.authorization.authorize(
+          principal,
+          employerId,
+          [EmployerMembershipRole.ADMIN],
+          transaction,
+        );
         if (input.userId !== undefined) {
+          if (!auth.isPlatformAdmin) throw authorizationDenied();
           const user = await transaction.user.findUnique({
             where: { id: input.userId },
             select: { status: true, normalizedEmail: true },
@@ -189,26 +196,33 @@ export class EmployeesService {
     employeeId: string,
     input: UpdateEmployeeDto,
   ): Promise<EmployeeResponseDto> {
-    await this.authorization.authorize(principal, employerId, [EmployerMembershipRole.ADMIN]);
-    const existing = await this.database.employee.findFirst({
-      where: { id: employeeId, employerId },
-      select: { id: true },
-    });
-    if (existing === null) throw resourceNotFound('Employee');
     try {
-      const employee = await this.database.employee.update({
-        where: { id: existing.id },
-        data: {
-          ...(input.email === undefined
-            ? {}
-            : { email: input.email.trim(), normalizedEmail: normalizeEmail(input.email) }),
-          ...(input.firstName === undefined ? {} : { firstName: input.firstName.trim() }),
-          ...(input.lastName === undefined ? {} : { lastName: input.lastName.trim() }),
-          ...(input.employeeNumber === undefined ? {} : { employeeNumber: input.employeeNumber }),
-          ...(input.department === undefined ? {} : { department: input.department }),
-          ...(input.jobTitle === undefined ? {} : { jobTitle: input.jobTitle }),
-        },
-        select: employeeSelect,
+      const employee = await this.database.$transaction(async (transaction) => {
+        await this.authorization.authorize(
+          principal,
+          employerId,
+          [EmployerMembershipRole.ADMIN],
+          transaction,
+        );
+        const existing = await transaction.employee.findFirst({
+          where: { id: employeeId, employerId },
+          select: { id: true },
+        });
+        if (existing === null) throw resourceNotFound('Employee');
+        return transaction.employee.update({
+          where: { id: existing.id, employerId },
+          data: {
+            ...(input.email === undefined
+              ? {}
+              : { email: input.email.trim(), normalizedEmail: normalizeEmail(input.email) }),
+            ...(input.firstName === undefined ? {} : { firstName: input.firstName.trim() }),
+            ...(input.lastName === undefined ? {} : { lastName: input.lastName.trim() }),
+            ...(input.employeeNumber === undefined ? {} : { employeeNumber: input.employeeNumber }),
+            ...(input.department === undefined ? {} : { department: input.department }),
+            ...(input.jobTitle === undefined ? {} : { jobTitle: input.jobTitle }),
+          },
+          select: employeeSelect,
+        });
       });
       return this.mapEmployee(employee);
     } catch (error: unknown) {
@@ -228,15 +242,20 @@ export class EmployeesService {
     employeeId: string,
     status: EmployeeStatus,
   ): Promise<EmployeeResponseDto> {
-    await this.authorization.authorize(principal, employerId, [EmployerMembershipRole.ADMIN]);
     const employee = await this.database.$transaction(async (transaction) => {
+      await this.authorization.authorize(
+        principal,
+        employerId,
+        [EmployerMembershipRole.ADMIN],
+        transaction,
+      );
       const existing = await transaction.employee.findFirst({
         where: { id: employeeId, employerId },
         select: { id: true, userId: true },
       });
       if (existing === null) throw resourceNotFound('Employee');
       const updated = await transaction.employee.update({
-        where: { id: existing.id },
+        where: { id: existing.id, employerId },
         data: { status },
         select: employeeSelect,
       });

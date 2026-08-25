@@ -40,6 +40,7 @@ describe('organization tenant authorization (e2e)', () => {
   let employeeBId: string;
   let providerAId: string;
   let providerBId: string;
+  let employerBAdminMembershipId: string;
   let providerAStaffMembershipId: string;
   let providerBAdminMembershipId: string;
 
@@ -65,6 +66,9 @@ describe('organization tenant authorization (e2e)', () => {
       'provider-admin-b',
       'provider-staff-a',
       'assignable',
+      'employer-assignable',
+      'employee-assignable',
+      'provider-assignable',
     ]) {
       const email = `${prefix}-${name}@example.com`;
       const user = await database.user.create({
@@ -114,9 +118,13 @@ describe('organization tenant authorization (e2e)', () => {
           },
         },
       },
+      include: { memberships: true },
     });
     employerAId = employerA.id;
     employerBId = employerB.id;
+    const employerBAdmin = employerB.memberships[0];
+    if (employerBAdmin === undefined) throw new Error('Expected employer B administrator.');
+    employerBAdminMembershipId = employerBAdmin.id;
 
     const employeeA = await database.employee.create({
       data: {
@@ -342,6 +350,99 @@ describe('organization tenant authorization (e2e)', () => {
       .get(`/api/v1/employers/${employerAId}/employees/${employeeBId}`)
       .set('authorization', bearer('employer-admin-a'))
       .expect(404);
+    await request(httpServer)
+      .post(`/api/v1/employers/${employerAId}/employees/${employeeBId}/deactivate`)
+      .set('authorization', bearer('employer-admin-a'))
+      .expect(404);
+    await request(httpServer)
+      .delete(`/api/v1/employers/${employerAId}/admins/${employerBAdminMembershipId}`)
+      .set('authorization', bearer('employer-admin-a'))
+      .expect(404);
+  });
+
+  it('prevents tenant administrators from probing global user IDs', async () => {
+    const missingUserId = randomUUID();
+    const employerExisting = await request(httpServer)
+      .post(`/api/v1/employers/${employerAId}/admins`)
+      .set('authorization', bearer('employer-admin-a'))
+      .send({ userId: user('employer-assignable').id })
+      .expect(403);
+    const employerMissing = await request(httpServer)
+      .post(`/api/v1/employers/${employerAId}/admins`)
+      .set('authorization', bearer('employer-admin-a'))
+      .send({ userId: missingUserId })
+      .expect(403);
+    expect(employerExisting.body as unknown).toMatchObject({
+      error: { code: 'AUTHORIZATION_DENIED' },
+    });
+    expect(employerMissing.body as unknown).toMatchObject({
+      error: { code: 'AUTHORIZATION_DENIED' },
+    });
+
+    const employeeExisting = await request(httpServer)
+      .post(`/api/v1/employers/${employerAId}/employees`)
+      .set('authorization', bearer('employer-admin-a'))
+      .send({
+        userId: user('employee-assignable').id,
+        email: user('employee-assignable').email,
+        firstName: 'Linked',
+        lastName: 'Existing',
+      })
+      .expect(403);
+    const employeeMissing = await request(httpServer)
+      .post(`/api/v1/employers/${employerAId}/employees`)
+      .set('authorization', bearer('employer-admin-a'))
+      .send({
+        userId: missingUserId,
+        email: `${prefix}-missing-account@example.com`,
+        firstName: 'Linked',
+        lastName: 'Missing',
+      })
+      .expect(403);
+    expect(employeeExisting.body as unknown).toMatchObject({
+      error: { code: 'AUTHORIZATION_DENIED' },
+    });
+    expect(employeeMissing.body as unknown).toMatchObject({
+      error: { code: 'AUTHORIZATION_DENIED' },
+    });
+
+    const providerExisting = await request(httpServer)
+      .post(`/api/v1/providers/${providerAId}/members`)
+      .set('authorization', bearer('provider-admin-a'))
+      .send({ userId: user('provider-assignable').id, role: ProviderMembershipRole.STAFF })
+      .expect(403);
+    const providerMissing = await request(httpServer)
+      .post(`/api/v1/providers/${providerAId}/members`)
+      .set('authorization', bearer('provider-admin-a'))
+      .send({ userId: missingUserId, role: ProviderMembershipRole.STAFF })
+      .expect(403);
+    expect(providerExisting.body as unknown).toMatchObject({
+      error: { code: 'AUTHORIZATION_DENIED' },
+    });
+    expect(providerMissing.body as unknown).toMatchObject({
+      error: { code: 'AUTHORIZATION_DENIED' },
+    });
+
+    await request(httpServer)
+      .post(`/api/v1/employers/${employerAId}/admins`)
+      .set('authorization', bearer('platform'))
+      .send({ userId: user('employer-assignable').id })
+      .expect(201);
+    await request(httpServer)
+      .post(`/api/v1/providers/${providerAId}/members`)
+      .set('authorization', bearer('platform'))
+      .send({ userId: user('provider-assignable').id, role: ProviderMembershipRole.STAFF })
+      .expect(201);
+    await request(httpServer)
+      .post(`/api/v1/employers/${employerAId}/employees`)
+      .set('authorization', bearer('platform'))
+      .send({
+        userId: user('employee-assignable').id,
+        email: user('employee-assignable').email,
+        firstName: 'Platform',
+        lastName: 'Linked',
+      })
+      .expect(201);
   });
 
   it('requires employee resource ownership in addition to the employee tenant role', async () => {
@@ -400,6 +501,10 @@ describe('organization tenant authorization (e2e)', () => {
       .set('authorization', bearer('employer-admin-a'))
       .expect(403);
     await request(httpServer)
+      .get(`/api/v1/employers/${employerAId}`)
+      .set('authorization', bearer('platform'))
+      .expect(200);
+    await request(httpServer)
       .post(`/api/v1/admin/employers/${employerAId}/activate`)
       .set('authorization', bearer('platform'))
       .expect(200);
@@ -420,6 +525,29 @@ describe('organization tenant authorization (e2e)', () => {
       .set('authorization', bearer('provider-admin-a'))
       .send({ role: ProviderMembershipRole.STAFF })
       .expect(404);
+    await request(httpServer)
+      .delete(`/api/v1/providers/${providerAId}/members/${providerBAdminMembershipId}`)
+      .set('authorization', bearer('provider-admin-a'))
+      .expect(404);
+  });
+
+  it('validates tenant existence before applying platform-admin bypass', async () => {
+    const missingEmployerId = randomUUID();
+    const missingProviderId = randomUUID();
+    await request(httpServer)
+      .get(`/api/v1/employers/${missingEmployerId}/employees`)
+      .set('authorization', bearer('platform'))
+      .expect(404)
+      .expect(({ body }) => {
+        expect(body as unknown).toMatchObject({ error: { code: 'EMPLOYER_NOT_FOUND' } });
+      });
+    await request(httpServer)
+      .get(`/api/v1/providers/${missingProviderId}/members`)
+      .set('authorization', bearer('platform'))
+      .expect(404)
+      .expect(({ body }) => {
+        expect(body as unknown).toMatchObject({ error: { code: 'PROVIDER_NOT_FOUND' } });
+      });
   });
 
   it('lets provider staff read their provider but not manage settings or memberships', async () => {
