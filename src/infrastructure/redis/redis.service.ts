@@ -24,13 +24,38 @@ export class RedisService implements OnApplicationShutdown {
     });
 
     this.client.on('error', (error: Error) => {
-      this.logger.warn({ err: error }, 'Redis connection error');
+      this.logger.warn({ errorType: error.name }, 'Redis connection error');
     });
   }
 
   async ping(): Promise<void> {
     await this.ensureConnected();
     await this.client.ping();
+  }
+
+  async consumeFixedWindow(
+    key: string,
+    windowSeconds: number,
+  ): Promise<{ count: number; ttlSeconds: number }> {
+    await this.ensureConnected();
+    const result = await this.client.eval(
+      `local count = redis.call('INCR', KEYS[1])
+       if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+       local ttl = redis.call('TTL', KEYS[1])
+       return { count, ttl }`,
+      { keys: [key], arguments: [windowSeconds.toString()] },
+    );
+
+    if (!Array.isArray(result) || result.length !== 2) {
+      throw new Error('Redis returned an invalid rate-limit result.');
+    }
+
+    const [count, ttl] = result;
+    if (typeof count !== 'number' || typeof ttl !== 'number') {
+      throw new Error('Redis returned an invalid rate-limit result.');
+    }
+
+    return { count, ttlSeconds: Math.max(ttl, 0) };
   }
 
   async onApplicationShutdown(): Promise<void> {

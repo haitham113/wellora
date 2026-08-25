@@ -7,6 +7,8 @@ import { ApiExceptionFilter } from './common/exceptions/api-exception.filter.js'
 import { buildLoggerOptions } from './common/logging/logger-options.js';
 import { type EnvironmentVariables, validateEnvironment } from './config/environment.schema.js';
 import { HealthModule } from './modules/health/health.module.js';
+import { AuthModule } from './modules/auth/auth.module.js';
+import { UsersModule } from './modules/users/users.module.js';
 
 @Module({
   imports: [
@@ -19,7 +21,9 @@ import { HealthModule } from './modules/health/health.module.js';
       inject: [ConfigService],
       useFactory: (config: ConfigService<EnvironmentVariables, true>) => buildLoggerOptions(config),
     }),
+    AuthModule,
     HealthModule,
+    UsersModule,
   ],
   providers: [
     {

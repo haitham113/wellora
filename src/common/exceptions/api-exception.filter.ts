@@ -9,7 +9,7 @@ import {
 import type { Response } from 'express';
 
 import type { RequestWithRequestId } from '../http/request-id.middleware.js';
-import type { ApplicationErrorBody } from './application.exception.js';
+import { ApplicationException, type ApplicationErrorBody } from './application.exception.js';
 
 interface ApiErrorResponse {
   error: {
@@ -49,12 +49,21 @@ export class ApiExceptionFilter implements ExceptionFilter {
     let message = 'An unexpected error occurred.';
     let details: unknown = null;
 
-    if (exception instanceof HttpException) {
+    if (exception instanceof ApplicationException) {
       status = exception.getStatus();
       const exceptionResponse = exception.getResponse();
 
       if (isApplicationErrorBody(exceptionResponse)) {
         ({ code, message, details = null } = exceptionResponse);
+      }
+    } else if (exception instanceof HttpException) {
+      status = exception.getStatus();
+      const exceptionResponse = exception.getResponse();
+
+      if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
+        this.logger.error(
+          `Unhandled HTTP error requestId=${requestId} exceptionType=${exception.constructor.name}`,
+        );
       } else {
         code = status === HttpStatus.BAD_REQUEST ? 'VALIDATION_FAILED' : getHttpErrorCode(status);
 
@@ -72,9 +81,10 @@ export class ApiExceptionFilter implements ExceptionFilter {
         }
       }
     } else {
+      const exceptionType =
+        exception instanceof Error ? exception.constructor.name : typeof exception;
       this.logger.error(
-        'Unhandled request error',
-        exception instanceof Error ? exception.stack : undefined,
+        `Unhandled request error requestId=${requestId} exceptionType=${exceptionType}`,
       );
     }
 
