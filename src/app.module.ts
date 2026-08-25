@@ -8,6 +8,8 @@ import { buildLoggerOptions } from './common/logging/logger-options.js';
 import { type EnvironmentVariables, validateEnvironment } from './config/environment.schema.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
+import { EmployersModule } from './modules/employers/employers.module.js';
+import { ProvidersModule } from './modules/providers/providers.module.js';
 import { UsersModule } from './modules/users/users.module.js';
 
 @Module({
@@ -22,7 +24,9 @@ import { UsersModule } from './modules/users/users.module.js';
       useFactory: (config: ConfigService<EnvironmentVariables, true>) => buildLoggerOptions(config),
     }),
     AuthModule,
+    EmployersModule,
     HealthModule,
+    ProvidersModule,
     UsersModule,
   ],
   providers: [

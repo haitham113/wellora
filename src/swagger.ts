@@ -15,7 +15,7 @@ export function setupSwagger(
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Wellora Marketplace API')
     .setDescription('B2B employee-benefits marketplace REST API')
-    .setVersion('0.2.0')
+    .setVersion('0.3.0')
     .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }, 'bearer')
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
