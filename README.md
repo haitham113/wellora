@@ -1,6 +1,6 @@
 # Wellora Marketplace API
 
-Wellora Marketplace is a production-style B2B employee-benefits marketplace API built as a modular monolith. The repository is being delivered phase by phase; Phase 1 provides the operational foundation only. Authentication and marketplace business domains are intentionally not implemented yet.
+Wellora Marketplace is a production-style B2B employee-benefits marketplace API built as a modular monolith. The repository is being delivered phase by phase; Phase 2 adds the identity and authorization foundation. Employer, provider, and marketplace business behavior remains intentionally out of scope.
 
 ## Current capabilities
 
@@ -12,6 +12,13 @@ Wellora Marketplace is a production-style B2B employee-benefits marketplace API 
 - Separate liveness and dependency-readiness endpoints
 - Reproducible Docker Compose development environment
 - Jest unit/e2e test foundations and GitHub Actions CI
+- Argon2id password authentication and account-status enforcement
+- Short-lived JWT access tokens with database-backed session validation
+- Opaque refresh-token rotation, hashed storage, and replay-family revocation
+- Password recovery, email verification, logout, and device-session lifecycle
+- Redis-backed rate limiting for sensitive authentication routes
+- Default-deny authentication guards and tenant-safe role primitives
+- Swagger/OpenAPI at `/docs`
 
 ## Runtime requirements
 
@@ -31,7 +38,7 @@ The package also supports Node.js 22.12 or newer in the Node 22 line. Older Node
 
 2. Replace the example PostgreSQL password in `.env`. Keep `POSTGRES_PASSWORD` and the password embedded in `DATABASE_URL` synchronized.
 
-3. Start the full stack:
+3. Build and start the stack. The one-shot migration container applies pending migrations before the API starts:
 
    ```bash
    docker compose up --build -d
@@ -44,32 +51,43 @@ The package also supports Node.js 22.12 or newer in the Node 22 line. Older Node
    curl http://localhost:3000/health/ready
    ```
 
+5. Explore the API at `http://localhost:3000/docs`.
+
 For host-based development, start only the dependencies and then run NestJS:
 
 ```bash
 docker compose up -d postgres redis
 npm ci
-npm run prisma:generate
+npm run prisma:migrate:deploy
 npm run start:dev
 ```
 
-No database migration exists yet because Phase 1 intentionally has no business tables.
+There is intentionally no public registration endpoint. B2B users will be created through controlled organization onboarding in Phase 3. Tests create isolated fixture accounts directly through the persistence/application boundary.
 
 ## Configuration
 
 All runtime configuration is validated during startup. The application fails fast when a required variable is missing or malformed.
 
-| Variable                   | Purpose                                       |
-| -------------------------- | --------------------------------------------- |
-| `NODE_ENV`                 | `development`, `test`, or `production`        |
-| `PORT`                     | HTTP listen port                              |
-| `LOG_LEVEL`                | Pino log level                                |
-| `CORS_ORIGINS`             | Comma-separated allowed origins               |
-| `DATABASE_URL`             | PostgreSQL connection URL                     |
-| `DB_POOL_MAX`              | Maximum PostgreSQL pool size per API instance |
-| `DB_CONNECT_TIMEOUT_MS`    | PostgreSQL connection timeout                 |
-| `REDIS_URL`                | Redis connection URL                          |
-| `REDIS_CONNECT_TIMEOUT_MS` | Redis connection timeout                      |
+| Variable                         | Purpose                                       |
+| -------------------------------- | --------------------------------------------- |
+| `NODE_ENV`                       | `development`, `test`, or `production`        |
+| `PORT`                           | HTTP listen port                              |
+| `LOG_LEVEL`                      | Pino log level                                |
+| `CORS_ORIGINS`                   | Comma-separated allowed origins               |
+| `DATABASE_URL`                   | PostgreSQL connection URL                     |
+| `DB_POOL_MAX`                    | Maximum PostgreSQL pool size per API instance |
+| `DB_CONNECT_TIMEOUT_MS`          | PostgreSQL connection timeout                 |
+| `REDIS_URL`                      | Redis connection URL                          |
+| `REDIS_CONNECT_TIMEOUT_MS`       | Redis connection timeout                      |
+| `JWT_ACCESS_SECRET`              | HMAC secret for access-token signatures       |
+| `JWT_ISSUER`                     | Required access-token issuer                  |
+| `JWT_AUDIENCE`                   | Required access-token audience                |
+| `JWT_ACCESS_TTL_SECONDS`         | Short-lived JWT validity                      |
+| `REFRESH_TOKEN_TTL_SECONDS`      | Maximum session and refresh lifetime          |
+| `AUTH_METADATA_SECRET`           | HMAC key for IP/rate-limit fingerprints       |
+| `AUTH_RATE_LIMIT_MAX`            | Attempts per sensitive endpoint/window        |
+| `AUTH_RATE_LIMIT_WINDOW_SECONDS` | Distributed rate-limit window                 |
+| `SWAGGER_ENABLED`                | Enables local OpenAPI UI and JSON             |
 
 Do not commit `.env`; only `.env.example` is tracked.
 
@@ -80,12 +98,36 @@ Do not commit `.env`; only `.env.example` is tracked.
 
 Business APIs use the `/api/v1` prefix. Operational health endpoints remain unversioned.
 
+## Identity API
+
+Public authentication routes:
+
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/refresh`
+- `POST /api/v1/auth/forgot-password`
+- `POST /api/v1/auth/reset-password`
+- `POST /api/v1/auth/verify-email`
+- `POST /api/v1/auth/resend-verification`
+
+Bearer-authenticated routes:
+
+- `POST /api/v1/auth/logout`
+- `POST /api/v1/auth/logout-all`
+- `POST /api/v1/auth/change-password`
+- `GET /api/v1/auth/sessions`
+- `DELETE /api/v1/auth/sessions/:sessionId`
+- `GET /api/v1/me`
+
+Forgot-password and verification requests deliberately return the same accepted response for known and unknown accounts. Secure token creation and consumption are implemented; email transport will be connected to the asynchronous notification workflow in Phase 8, and tokens are never returned from these request endpoints.
+
 ## Quality commands
 
 ```bash
 npm run lint
 npm run typecheck
 npm test
+npm run test:integration
+npm run test:auth:e2e
 npm run test:e2e
 npm run build
 npm run format:check
@@ -97,12 +139,17 @@ docker compose --env-file .env.example config --quiet
 
 - [Architecture overview](docs/architecture.md)
 - [ADR-001: Modular monolith](docs/decisions/ADR-001-modular-monolith.md)
+- [ADR-004: Multi-tenant authorization](docs/decisions/ADR-004-multi-tenant-authorization.md)
+- [Database and identity ERD](docs/database.md)
+- [Security policy and design](SECURITY.md)
+- [API examples](docs/api-examples.md)
 - [Ten-phase implementation plan](IMPLEMENTATION_PLAN.md)
 - [Authoritative build brief](CODEX_B2B_MARKETPLACE_API_BUILD_BRIEF.md)
 
 ## Project status
 
-- Phase 1: Foundation
-- Next phase, pending explicit approval: Identity
+- Phase 1: Foundation — complete
+- Phase 2: Identity — complete
+- Next phase, pending explicit approval: Organizations
 
 Do not infer future-phase functionality from the planned directory names or documentation.
