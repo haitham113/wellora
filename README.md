@@ -1,6 +1,6 @@
 # Wellora Marketplace API
 
-Wellora Marketplace is a production-style B2B employee-benefits marketplace API built as a modular monolith. The repository is being delivered phase by phase; Phase 2 adds the identity and authorization foundation. Employer, provider, and marketplace business behavior remains intentionally out of scope.
+Wellora Marketplace is a production-style B2B employee-benefits marketplace API built as a modular monolith. The repository is being delivered phase by phase; Phase 3 adds employer, employee, provider, membership, and tenant-authorization behavior. Marketplace and later workflows remain intentionally out of scope.
 
 ## Current capabilities
 
@@ -17,7 +17,9 @@ Wellora Marketplace is a production-style B2B employee-benefits marketplace API 
 - Opaque refresh-token rotation, hashed storage, and replay-family revocation
 - Password recovery, email verification, logout, and device-session lifecycle
 - Redis-backed rate limiting for sensitive authentication routes
-- Default-deny authentication guards and tenant-safe role primitives
+- Employer/provider onboarding, typed settings, lifecycle management, and membership administration
+- Employee and provider search/filtering with bounded pagination
+- Database-resolved tenant roles plus resource-ownership enforcement
 - Swagger/OpenAPI at `/docs`
 
 ## Runtime requirements
@@ -67,7 +69,7 @@ npm run prisma:migrate:deploy
 npm run start:dev
 ```
 
-There is intentionally no public registration endpoint. B2B users will be created through controlled organization onboarding in Phase 3. Tests create isolated fixture accounts directly through the persistence/application boundary.
+There is intentionally no public registration endpoint. Platform administrators onboard organizations and assign an existing active account as the initial administrator in the same transaction. Email invitation delivery remains Phase 8 scope.
 
 ## Configuration
 
@@ -131,6 +133,14 @@ Forgot-password and verification requests deliberately return the same accepted 
 
 Password change is treated as a security boundary: it revokes every session, refresh token, and outstanding password-reset token. The caller must sign in again with the new password.
 
+## Organization API
+
+Platform administrators onboard, search, update, activate, and deactivate employers and providers under `/api/v1/admin/employers` and `/api/v1/admin/providers`. Organization creation requires an existing active initial-admin account and commits the organization plus membership atomically.
+
+Tenant operations use `/api/v1/employers/:employerId` and `/api/v1/providers/:providerId`. Employer admins manage typed settings, administrators, employee profiles, and employee lifecycle. Provider admins manage provider details plus admin/staff memberships; provider staff have read-only organization access in this phase. Employee and provider lists support validated filters with `page`/`limit` pagination capped at 100.
+
+Tenant IDs in paths are requested scope only. PostgreSQL membership, organization state, tenant role, and child-resource ownership are all checked server-side. See [ADR-004](docs/decisions/ADR-004-multi-tenant-authorization.md) for the authorization strategy.
+
 ## Quality commands
 
 ```bash
@@ -139,6 +149,7 @@ npm run typecheck
 npm test
 npm run test:integration
 npm run test:auth:e2e
+npm run test:tenant:e2e
 npm run test:e2e
 npm run build
 npm run format:check
@@ -151,7 +162,7 @@ docker compose --env-file .env.example config --quiet
 - [Architecture overview](docs/architecture.md)
 - [ADR-001: Modular monolith](docs/decisions/ADR-001-modular-monolith.md)
 - [ADR-004: Multi-tenant authorization](docs/decisions/ADR-004-multi-tenant-authorization.md)
-- [Database and identity ERD](docs/database.md)
+- [Database and organization ERD](docs/database.md)
 - [Security policy and design](SECURITY.md)
 - [API examples](docs/api-examples.md)
 - [Ten-phase implementation plan](IMPLEMENTATION_PLAN.md)
@@ -161,6 +172,7 @@ docker compose --env-file .env.example config --quiet
 
 - Phase 1: Foundation — complete
 - Phase 2: Identity — complete
-- Next phase, pending explicit approval: Organizations
+- Phase 3: Organizations — complete
+- Phase 4 and later: not implemented
 
 Do not infer future-phase functionality from the planned directory names or documentation.
