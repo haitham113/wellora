@@ -7,5 +7,5 @@ module.exports = {
   collectCoverageFrom: undefined,
   rootDir: '..',
   setupFiles: ['<rootDir>/test/setup-environment.cjs'],
-  testMatch: ['<rootDir>/test/e2e/**/*.e2e-spec.ts'],
+  testMatch: ['<rootDir>/test/integration/**/*.integration-spec.ts'],
 };
