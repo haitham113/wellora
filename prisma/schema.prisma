@@ -67,6 +67,21 @@ enum ActivityMediaType {
   VIDEO
 }
 
+enum ActivitySessionStatus {
+  SCHEDULED
+  CANCELLED
+  COMPLETED
+}
+
+enum DstOverlapPolicy {
+  EARLIER
+  LATER
+}
+
+enum DstGapPolicy {
+  SKIP
+}
+
 model User {
   id                String        @id @default(uuid()) @db.Uuid
   email             String        @db.VarChar(320)
@@ -79,11 +94,12 @@ model User {
   createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  sessions            AuthSession[]
-  oneTimeTokens       OneTimeToken[]
-  employerMemberships EmployerMembership[]
-  employeeProfiles    Employee[]
-  providerMemberships ProviderMembership[]
+  sessions                  AuthSession[]
+  oneTimeTokens             OneTimeToken[]
+  employerMemberships       EmployerMembership[]
+  employeeProfiles          Employee[]
+  providerMemberships       ProviderMembership[]
+  cancelledActivitySessions ActivitySession[]    @relation("ActivitySessionCancelledBy")
 
   @@index([status])
   @@map("users")
@@ -304,9 +320,11 @@ model Activity {
   createdAt                 DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt                 DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  provider Provider        @relation(fields: [providerId], references: [id], onDelete: Restrict)
-  category Category        @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  media    ActivityMedia[]
+  provider          Provider                   @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  category          Category                   @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  media             ActivityMedia[]
+  sessions          ActivitySession[]
+  scheduleTemplates ActivityScheduleTemplate[]
 
   @@unique([providerId, normalizedSlug])
   @@index([providerId, status, createdAt, id])
@@ -336,4 +354,63 @@ model ActivityMedia {
 
   @@index([activityId, displayOrder, id])
   @@map("activity_media")
+}
+
+model ActivityScheduleTemplate {
+  id                   String           @id @default(uuid()) @db.Uuid
+  activityId           String           @map("activity_id") @db.Uuid
+  timezone             String           @db.VarChar(64)
+  localStartTime       String           @map("local_start_time") @db.Char(5)
+  weekdays             Int[]
+  intervalWeeks        Int              @default(1) @map("interval_weeks") @db.SmallInt
+  generationStartDate  DateTime         @map("generation_start_date") @db.Date
+  generationEndDate    DateTime         @map("generation_end_date") @db.Date
+  durationMinutes      Int              @map("duration_minutes") @db.SmallInt
+  capacity             Int              @db.SmallInt
+  bookingCutoffMinutes Int              @map("booking_cutoff_minutes")
+  dstOverlapPolicy     DstOverlapPolicy @default(EARLIER) @map("dst_overlap_policy")
+  dstGapPolicy         DstGapPolicy     @default(SKIP) @map("dst_gap_policy")
+  lastGeneratedAt      DateTime?        @map("last_generated_at") @db.Timestamptz(3)
+  createdAt            DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  activity Activity          @relation(fields: [activityId], references: [id], onDelete: Restrict)
+  sessions ActivitySession[]
+
+  @@unique([id, activityId], map: "activity_schedule_templates_id_activity_id_key")
+  @@index([activityId, generationStartDate, generationEndDate, id], map: "activity_schedule_templates_activity_window_id_idx")
+  @@map("activity_schedule_templates")
+}
+
+model ActivitySession {
+  id                   String                @id @default(uuid()) @db.Uuid
+  activityId           String                @map("activity_id") @db.Uuid
+  scheduleTemplateId   String?               @map("schedule_template_id") @db.Uuid
+  startsAt             DateTime              @map("starts_at") @db.Timestamptz(3)
+  endsAt               DateTime              @map("ends_at") @db.Timestamptz(3)
+  timezone             String                @db.VarChar(64)
+  utcOffsetMinutes     Int                   @map("utc_offset_minutes") @db.SmallInt
+  capacity             Int                   @db.SmallInt
+  bookedCount          Int                   @default(0) @map("booked_count") @db.SmallInt
+  bookingCutoffMinutes Int                   @map("booking_cutoff_minutes")
+  bookingCutoffAt      DateTime              @map("booking_cutoff_at") @db.Timestamptz(3)
+  status               ActivitySessionStatus @default(SCHEDULED)
+  cancellationReason   String?               @map("cancellation_reason") @db.VarChar(500)
+  cancelledAt          DateTime?             @map("cancelled_at") @db.Timestamptz(3)
+  cancelledByUserId    String?               @map("cancelled_by_user_id") @db.Uuid
+  completedAt          DateTime?             @map("completed_at") @db.Timestamptz(3)
+  version              Int                   @default(0)
+  createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  activity         Activity                  @relation(fields: [activityId], references: [id], onDelete: Restrict)
+  scheduleTemplate ActivityScheduleTemplate? @relation(fields: [scheduleTemplateId, activityId], references: [id, activityId], onDelete: Restrict)
+  cancelledBy      User?                     @relation("ActivitySessionCancelledBy", fields: [cancelledByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([activityId, startsAt])
+  @@index([activityId, status, startsAt, id])
+  @@index([status, bookingCutoffAt, startsAt, id], map: "activity_sessions_status_cutoff_starts_id_idx")
+  @@index([scheduleTemplateId, startsAt, id])
+  @@index([cancelledByUserId, cancelledAt])
+  @@map("activity_sessions")
 }
