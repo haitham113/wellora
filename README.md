@@ -1,6 +1,6 @@
 # Wellora Marketplace API
 
-Wellora Marketplace is a production-style B2B employee-benefits marketplace API built as a modular monolith. The repository is being delivered phase by phase; Phase 4 adds the provider-owned activity catalog, category administration, explicit publication lifecycle, and indexed public discovery. Scheduling and later workflows remain intentionally out of scope.
+Wellora Marketplace is a production-style B2B employee-benefits marketplace API built as a modular monolith. The repository is being delivered phase by phase; Phase 5 adds provider-owned activity sessions, employee availability, finite recurring schedule materialization, explicit lifecycle/capacity rules, and DST-aware timezone handling. Financial, booking, and later workflows remain intentionally out of scope.
 
 ## Current capabilities
 
@@ -151,7 +151,9 @@ Platform administrators manage categories under `/api/v1/admin/categories`; `GET
 
 Public and employee clients use `GET /api/v1/activities` and `GET /api/v1/activities/:activityId`. Discovery requires the activity to be `PUBLISHED` and both its provider and category to be active. Search and category, provider, currency-qualified price, location-type, country, and normalized-city filters compose with deterministic sorting and bounded `page`/`limit` pagination. Catalog pages expose navigation flags without issuing an exact count query.
 
-Activity prices are integer minor units stored as PostgreSQL `bigint` and serialized as decimal strings such as `"2500"`; floating-point money never crosses the API boundary. Drafts may be incomplete, but publishing validates every required description, commercial, duration, location, participation, cancellation, and cutoff field. Scheduling and availability are Phase 5 scope.
+Activity prices are integer minor units stored as PostgreSQL `bigint` and serialized as decimal strings such as `"2500"`; floating-point money never crosses the API boundary. Drafts may be incomplete, but publishing validates every required description, commercial, duration, location, participation, cancellation, and cutoff field.
+
+Scheduling stores UTC instants as PostgreSQL `timestamptz` and snapshots the provider IANA timezone and chosen start offset on every session. One-time input uses provider-local wall time; DST gaps are rejected and overlaps require an explicit `EARLIER`/`LATER` choice. Weekly recurrence is finite and materialized, with explicit gap skipping and idempotent `(activity_id, starts_at)` persistence. Availability exposes derived remaining capacity without persisting a redundant counter. Transactional booking and overbooking protection begin in Phase 7.
 
 ## Quality commands
 
@@ -174,6 +176,7 @@ docker compose --env-file .env.example config --quiet
 - [Architecture overview](docs/architecture.md)
 - [ADR-001: Modular monolith](docs/decisions/ADR-001-modular-monolith.md)
 - [ADR-004: Multi-tenant authorization](docs/decisions/ADR-004-multi-tenant-authorization.md)
+- [ADR-005: UTC storage and finite provider-local scheduling](docs/decisions/ADR-005-scheduling-timezones.md)
 - [Database and organization ERD](docs/database.md)
 - [Security policy and design](SECURITY.md)
 - [API examples](docs/api-examples.md)
@@ -186,6 +189,7 @@ docker compose --env-file .env.example config --quiet
 - Phase 2: Identity — complete
 - Phase 3: Organizations — complete
 - Phase 4: Marketplace — implemented
-- Phase 5 and later: not implemented
+- Phase 5: Scheduling — implemented
+- Phase 6 and later: not implemented
 
 Do not infer future-phase functionality from the planned directory names or documentation.
