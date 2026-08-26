@@ -6,6 +6,8 @@ import { LoggerModule } from 'nestjs-pino';
 import { ApiExceptionFilter } from './common/exceptions/api-exception.filter.js';
 import { buildLoggerOptions } from './common/logging/logger-options.js';
 import { type EnvironmentVariables, validateEnvironment } from './config/environment.schema.js';
+import { ActivitiesModule } from './modules/activities/activities.module.js';
+import { CategoriesModule } from './modules/categories/categories.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { EmployersModule } from './modules/employers/employers.module.js';
@@ -23,7 +25,9 @@ import { UsersModule } from './modules/users/users.module.js';
       inject: [ConfigService],
       useFactory: (config: ConfigService<EnvironmentVariables, true>) => buildLoggerOptions(config),
     }),
+    ActivitiesModule,
     AuthModule,
+    CategoriesModule,
     EmployersModule,
     HealthModule,
     ProvidersModule,

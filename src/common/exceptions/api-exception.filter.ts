@@ -20,6 +20,12 @@ interface ApiErrorResponse {
   };
 }
 
+interface ValidationViolation {
+  field: string;
+  code: 'INVALID_VALUE';
+  message: string;
+}
+
 function isApplicationErrorBody(value: unknown): value is ApplicationErrorBody {
   if (typeof value !== 'object' || value === null) {
     return false;
@@ -77,7 +83,9 @@ export class ApiExceptionFilter implements ExceptionFilter {
             : typeof responseMessage === 'string'
               ? responseMessage
               : exception.message;
-          details = Array.isArray(responseMessage) ? { messages: responseMessage } : null;
+          details = Array.isArray(responseMessage)
+            ? { violations: responseMessage.map(validationViolation) }
+            : null;
         }
       }
     } else {
@@ -97,4 +105,14 @@ export class ApiExceptionFilter implements ExceptionFilter {
       },
     });
   }
+}
+
+function validationViolation(message: unknown): ValidationViolation {
+  const normalized = typeof message === 'string' ? message : 'The supplied value is invalid.';
+  const [candidate = 'request'] = normalized.split(' ', 1);
+  return {
+    field: /^[A-Za-z0-9_.[\]-]+$/.test(candidate) ? candidate : 'request',
+    code: 'INVALID_VALUE',
+    message: normalized,
+  };
 }
