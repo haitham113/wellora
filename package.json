@@ -1,6 +1,6 @@
 {
   "name": "b2b-marketplace-api",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Wellora Marketplace modular-monolith API",
   "private": true,
   "license": "UNLICENSED",
