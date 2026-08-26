@@ -49,6 +49,24 @@ enum ProviderMembershipRole {
   STAFF
 }
 
+enum ActivityStatus {
+  DRAFT
+  PUBLISHED
+  PAUSED
+  ARCHIVED
+}
+
+enum ActivityLocationType {
+  ONSITE
+  ONLINE
+  HYBRID
+}
+
+enum ActivityMediaType {
+  IMAGE
+  VIDEO
+}
+
 model User {
   id                String        @id @default(uuid()) @db.Uuid
   email             String        @db.VarChar(320)
@@ -210,6 +228,7 @@ model Provider {
   updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   memberships ProviderMembership[]
+  activities  Activity[]
 
   @@index([status, businessName, id])
   @@index([country, status])
@@ -232,4 +251,89 @@ model ProviderMembership {
   @@index([userId, status, role])
   @@index([providerId, role, status])
   @@map("provider_memberships")
+}
+
+model Category {
+  id             String   @id @default(uuid()) @db.Uuid
+  name           String   @db.VarChar(120)
+  slug           String   @db.VarChar(120)
+  normalizedSlug String   @unique @map("normalized_slug") @db.VarChar(120)
+  description    String?  @db.Text
+  isActive       Boolean  @default(true) @map("is_active")
+  displayOrder   Int      @default(0) @map("display_order") @db.SmallInt
+  searchText     String   @default(dbgenerated()) @map("search_text") @db.Text
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  activities Activity[]
+
+  @@index([isActive, displayOrder, name, id])
+  @@map("categories")
+}
+
+model Activity {
+  id                        String                @id @default(uuid()) @db.Uuid
+  providerId                String                @map("provider_id") @db.Uuid
+  categoryId                String                @map("category_id") @db.Uuid
+  title                     String                @db.VarChar(160)
+  slug                      String                @db.VarChar(120)
+  normalizedSlug            String                @map("normalized_slug") @db.VarChar(120)
+  shortDescription          String?               @map("short_description") @db.VarChar(500)
+  fullDescription           String?               @map("full_description") @db.Text
+  priceMinor                BigInt?               @map("price_minor") @db.BigInt
+  currency                  String?               @db.Char(3)
+  durationMinutes           Int?                  @map("duration_minutes") @db.SmallInt
+  locationType              ActivityLocationType? @map("location_type")
+  venueName                 String?               @map("venue_name") @db.VarChar(160)
+  addressLine1              String?               @map("address_line_1") @db.VarChar(200)
+  addressLine2              String?               @map("address_line_2") @db.VarChar(200)
+  city                      String?               @db.VarChar(120)
+  normalizedCity            String?               @map("normalized_city") @db.VarChar(120)
+  region                    String?               @db.VarChar(120)
+  postalCode                String?               @map("postal_code") @db.VarChar(32)
+  country                   String?               @db.Char(2)
+  onlineUrl                 String?               @map("online_url") @db.VarChar(2048)
+  status                    ActivityStatus        @default(DRAFT)
+  minParticipants           Int?                  @map("min_participants") @db.SmallInt
+  maxParticipants           Int?                  @map("max_participants") @db.SmallInt
+  cancellationPolicy        String?               @map("cancellation_policy") @db.Text
+  cancellationWindowMinutes Int?                  @map("cancellation_window_minutes")
+  bookingCutoffMinutes      Int?                  @map("booking_cutoff_minutes")
+  searchText                String                @default(dbgenerated()) @map("search_text") @db.Text
+  publishedAt               DateTime?             @map("published_at") @db.Timestamptz(3)
+  createdAt                 DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                 DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  provider Provider        @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  category Category        @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  media    ActivityMedia[]
+
+  @@unique([providerId, normalizedSlug])
+  @@index([providerId, status, createdAt, id])
+  @@index([providerId, status, priceMinor, id])
+  @@index([providerId, status, title, id])
+  @@index([providerId, status, durationMinutes, id])
+  @@index([status, publishedAt, id])
+  @@index([status, currency, priceMinor, id])
+  @@index([status, title, id])
+  @@index([status, durationMinutes, id])
+  @@index([status, categoryId, publishedAt, id])
+  @@index([status, providerId, publishedAt, id])
+  @@index([status, locationType, country, normalizedCity, publishedAt, id], map: "activities_status_location_published_at_id_idx")
+  @@map("activities")
+}
+
+model ActivityMedia {
+  id           String            @id @default(uuid()) @db.Uuid
+  activityId   String            @map("activity_id") @db.Uuid
+  type         ActivityMediaType
+  url          String            @db.VarChar(2048)
+  altText      String?           @map("alt_text") @db.VarChar(240)
+  displayOrder Int               @default(0) @map("display_order") @db.SmallInt
+  createdAt    DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  activity Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  @@index([activityId, displayOrder, id])
+  @@map("activity_media")
 }
