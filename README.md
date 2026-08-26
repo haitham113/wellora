@@ -1,6 +1,6 @@
 # Wellora Marketplace API
 
-Wellora Marketplace is a production-style B2B employee-benefits marketplace API built as a modular monolith. The repository is being delivered phase by phase; Phase 3 adds employer, employee, provider, membership, and tenant-authorization behavior. Marketplace and later workflows remain intentionally out of scope.
+Wellora Marketplace is a production-style B2B employee-benefits marketplace API built as a modular monolith. The repository is being delivered phase by phase; Phase 4 adds the provider-owned activity catalog, category administration, explicit publication lifecycle, and indexed public discovery. Scheduling and later workflows remain intentionally out of scope.
 
 ## Current capabilities
 
@@ -20,6 +20,10 @@ Wellora Marketplace is a production-style B2B employee-benefits marketplace API 
 - Employer/provider onboarding, typed settings, lifecycle management, and membership administration
 - Employee and provider search/filtering with bounded pagination
 - Database-resolved tenant roles plus resource-ownership enforcement
+- Platform-managed categories with active/inactive discovery state
+- Provider-owned draft, published, paused, and archived activities
+- Public activity search, category/provider/price/location filters, stable sorting, and bounded pagination
+- PostgreSQL-backed publication validity and bigint minor-unit prices serialized safely as strings
 - Swagger/OpenAPI at `/docs`
 
 ## Runtime requirements
@@ -141,6 +145,14 @@ Tenant operations use `/api/v1/employers/:employerId` and `/api/v1/providers/:pr
 
 Tenant IDs in paths are requested scope only. PostgreSQL membership, organization state, tenant role, and child-resource ownership are all checked server-side. See [ADR-004](docs/decisions/ADR-004-multi-tenant-authorization.md) for the authorization strategy.
 
+## Marketplace API
+
+Platform administrators manage categories under `/api/v1/admin/categories`; `GET /api/v1/categories` exposes only active categories. Provider admins and staff can create and edit activities under `/api/v1/providers/:providerId/activities`. Publication and permanent archival are admin-only, while staff can pause a published activity when operationally necessary.
+
+Public and employee clients use `GET /api/v1/activities` and `GET /api/v1/activities/:activityId`. Discovery requires the activity to be `PUBLISHED` and both its provider and category to be active. Search and category, provider, currency-qualified price, location-type, country, and normalized-city filters compose with deterministic sorting and bounded `page`/`limit` pagination. Catalog pages expose navigation flags without issuing an exact count query.
+
+Activity prices are integer minor units stored as PostgreSQL `bigint` and serialized as decimal strings such as `"2500"`; floating-point money never crosses the API boundary. Drafts may be incomplete, but publishing validates every required description, commercial, duration, location, participation, cancellation, and cutoff field. Scheduling and availability are Phase 5 scope.
+
 ## Quality commands
 
 ```bash
@@ -173,6 +185,7 @@ docker compose --env-file .env.example config --quiet
 - Phase 1: Foundation — complete
 - Phase 2: Identity — complete
 - Phase 3: Organizations — complete
-- Phase 4 and later: not implemented
+- Phase 4: Marketplace — implemented
+- Phase 5 and later: not implemented
 
 Do not infer future-phase functionality from the planned directory names or documentation.
