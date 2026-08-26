@@ -25,3 +25,8 @@ logs/
 
 # Local data
 data/
+
+# Local Markdown documentation (keep only the root README tracked)
+*.md
+*.MD
+!/README.md
