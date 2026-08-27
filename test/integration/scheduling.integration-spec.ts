@@ -136,6 +136,23 @@ describe('scheduling persistence (integration)', () => {
     expect(result.data.map((session) => session.id)).toContain(created.id);
   });
 
+  it('snapshots distinct start and end offsets when a session crosses a DST transition', async () => {
+    const created = await sessions.create(principal, providerId, activityId, {
+      localStartsAt: '2099-03-29T00:30',
+      durationMinutes: 120,
+      capacity: 4,
+    });
+
+    expect(created).toMatchObject({
+      startsAt: '2099-03-29T00:30:00.000Z',
+      endsAt: '2099-03-29T02:30:00.000Z',
+      localStartsAt: '2099-03-29T00:30',
+      localEndsAt: '2099-03-29T03:30',
+      utcOffsetMinutes: 0,
+      utcEndOffsetMinutes: 60,
+    });
+  });
+
   it('generates a finite weekly schedule across DST and regenerates idempotently', async () => {
     const schedule = await schedules.create(principal, providerId, activityId, {
       localStartTime: '01:30',
@@ -158,12 +175,60 @@ describe('scheduling persistence (integration)', () => {
     const materialized = await database.activitySession.findMany({
       where: { scheduleTemplateId: schedule.id },
       orderBy: { startsAt: 'asc' },
-      select: { startsAt: true, utcOffsetMinutes: true },
+      select: { id: true, startsAt: true, utcOffsetMinutes: true },
     });
-    expect(materialized).toEqual([
+    expect(
+      materialized.map(({ startsAt, utcOffsetMinutes }) => ({ startsAt, utcOffsetMinutes })),
+    ).toEqual([
       { startsAt: new Date('2099-03-22T01:30:00.000Z'), utcOffsetMinutes: 0 },
       { startsAt: new Date('2099-04-05T00:30:00.000Z'), utcOffsetMinutes: 60 },
     ]);
+    const occurrence = materialized[0];
+    if (occurrence === undefined) throw new Error('Expected a generated occurrence.');
+    await expect(
+      sessions.update(principal, providerId, occurrence.id, {
+        localStartsAt: '2099-03-22T02:30',
+      }),
+    ).rejects.toMatchObject({ response: { code: 'RECURRING_SESSION_TIME_IMMUTABLE' } });
+  });
+
+  it('rejects a recurring generation atomically when an occurrence is already occupied', async () => {
+    await sessions.create(principal, providerId, activityId, {
+      localStartsAt: '2099-06-01T11:00',
+      capacity: 4,
+    });
+    const schedule = await schedules.create(principal, providerId, activityId, {
+      localStartTime: '11:00',
+      weekdays: [1, 2, 3, 4, 5, 6, 7],
+      intervalWeeks: 1,
+      generationStartDate: '2099-06-01',
+      generationEndDate: '2099-06-01',
+      capacity: 4,
+      dstOverlapPolicy: DstOverlapPolicy.EARLIER,
+      dstGapPolicy: DstGapPolicy.SKIP,
+    });
+
+    await expect(
+      schedules.generate(principal, providerId, activityId, schedule.id, {}),
+    ).rejects.toMatchObject({ response: { code: 'SCHEDULE_SESSION_CONFLICT' } });
+    await expect(
+      database.activitySession.count({ where: { scheduleTemplateId: schedule.id } }),
+    ).resolves.toBe(0);
+  });
+
+  it('limits an inclusive recurring generation window to 366 calendar dates', async () => {
+    await expect(
+      schedules.create(principal, providerId, activityId, {
+        localStartTime: '11:00',
+        weekdays: [1],
+        intervalWeeks: 1,
+        generationStartDate: '2099-01-01',
+        generationEndDate: '2100-01-02',
+        capacity: 4,
+        dstOverlapPolicy: DstOverlapPolicy.EARLIER,
+        dstGapPolicy: DstGapPolicy.SKIP,
+      }),
+    ).rejects.toMatchObject({ response: { code: 'SCHEDULE_RANGE_TOO_LARGE' } });
   });
 
   it('omits closed, sold-out, and catalog-hidden sessions from employee availability', async () => {
@@ -179,15 +244,30 @@ describe('scheduling persistence (integration)', () => {
     });
     expect((await availability.list(activityId, query)).data).toHaveLength(0);
 
+    const persisted = await database.activitySession.findUniqueOrThrow({
+      where: { id: oneTimeSessionId },
+      select: { startsAt: true },
+    });
+    const closedCutoffAt = new Date('2026-01-01T00:00:00.000Z');
+    const closedCutoffMinutes = Math.round(
+      (persisted.startsAt.getTime() - closedCutoffAt.getTime()) / 60_000,
+    );
     await database.activitySession.update({
       where: { id: oneTimeSessionId },
-      data: { bookedCount: 0, bookingCutoffAt: new Date('2026-01-01T00:00:00.000Z') },
+      data: {
+        bookedCount: 0,
+        bookingCutoffMinutes: closedCutoffMinutes,
+        bookingCutoffAt: closedCutoffAt,
+      },
     });
     expect((await availability.list(activityId, query)).data).toHaveLength(0);
 
     await database.activitySession.update({
       where: { id: oneTimeSessionId },
-      data: { bookingCutoffAt: new Date('2099-12-15T07:30:00.000Z') },
+      data: {
+        bookingCutoffMinutes: 120,
+        bookingCutoffAt: new Date('2099-12-15T07:30:00.000Z'),
+      },
     });
     await database.activity.update({
       where: { id: activityId },
@@ -233,6 +313,24 @@ describe('scheduling persistence (integration)', () => {
       data: { bookedCount: 0 },
     });
     await expect(
+      database.activitySession.update({
+        where: { id: existing.id },
+        data: { bookingCutoffAt: new Date('2099-12-15T07:31:00.000Z') },
+      }),
+    ).rejects.toBeDefined();
+    await expect(
+      database.activitySession.update({
+        where: { id: existing.id },
+        data: {
+          bookedCount: 1,
+          status: 'CANCELLED',
+          cancellationReason: 'Constraint test',
+          cancelledAt: new Date(),
+          cancelledByUserId: userId,
+        },
+      }),
+    ).rejects.toBeDefined();
+    await expect(
       database.activitySession.create({
         data: {
           activityId,
@@ -240,6 +338,7 @@ describe('scheduling persistence (integration)', () => {
           endsAt: new Date(existing.startsAt.getTime() + 60 * 60_000),
           timezone: existing.timezone,
           utcOffsetMinutes: existing.utcOffsetMinutes,
+          utcEndOffsetMinutes: existing.utcEndOffsetMinutes,
           capacity: 1,
           bookingCutoffMinutes: 0,
           bookingCutoffAt: existing.startsAt,
@@ -254,6 +353,7 @@ describe('scheduling persistence (integration)', () => {
           endsAt: new Date('2100-01-01T10:00:00.000Z'),
           timezone: 'Europe/London',
           utcOffsetMinutes: 0,
+          utcEndOffsetMinutes: 0,
           capacity: 1,
           bookingCutoffMinutes: 0,
           bookingCutoffAt: new Date('2100-01-01T10:00:00.000Z'),
@@ -284,6 +384,7 @@ describe('scheduling persistence (integration)', () => {
             endsAt: new Date('2100-02-01T11:00:00.000Z'),
             timezone: 'Europe/London',
             utcOffsetMinutes: 0,
+            utcEndOffsetMinutes: 0,
             capacity: 1,
             bookingCutoffMinutes: 0,
             bookingCutoffAt: new Date('2100-02-01T10:00:00.000Z'),

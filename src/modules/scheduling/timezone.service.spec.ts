@@ -49,9 +49,28 @@ describe('TimezoneService', () => {
   it('rejects fixed offsets and unknown names as provider IANA zones', () => {
     expect(
       applicationErrorCode(() => {
-        timezone.assertIanaZone('UTC+02:00');
+        timezone.canonicalizeIanaZone('UTC+02:00');
       }),
     ).toBe('INVALID_TIMEZONE');
+  });
+
+  it('distinguishes invalid calendar values from DST gaps', () => {
+    expect(
+      applicationErrorCode(() => {
+        timezone.resolveLocalDateTime('2027-02-30T09:30', 'Europe/London');
+      }),
+    ).toBe('SESSION_LOCAL_TIME_INVALID');
+  });
+
+  it('canonicalizes supported IANA aliases', () => {
+    expect(timezone.canonicalizeIanaZone('US/Eastern')).toBe('America/New_York');
+  });
+
+  it('formats stored local wall times from their offset snapshots', () => {
+    const instant = new Date('2027-03-28T01:30:00.000Z');
+
+    expect(timezone.formatLocalDateTimeAtOffset(instant, 0)).toBe('2027-03-28T01:30');
+    expect(timezone.formatLocalDateTimeAtOffset(instant, 60)).toBe('2027-03-28T02:30');
   });
 });
 

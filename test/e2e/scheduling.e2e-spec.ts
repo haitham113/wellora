@@ -28,7 +28,10 @@ interface SessionBody {
   startsAt: string;
   endsAt: string;
   localStartsAt: string;
+  localEndsAt: string;
   timezone: string;
+  utcOffsetMinutes: number;
+  utcEndOffsetMinutes: number;
   capacity: number;
   remainingCapacity: number;
   status: string;
@@ -198,7 +201,10 @@ describe('scheduling and availability (e2e)', () => {
       startsAt: '2099-12-15T09:30:00.000Z',
       endsAt: '2099-12-15T10:30:00.000Z',
       localStartsAt: '2099-12-15T09:30',
+      localEndsAt: '2099-12-15T10:30',
       timezone: 'Europe/London',
+      utcOffsetMinutes: 0,
+      utcEndOffsetMinutes: 0,
       capacity: 10,
       remainingCapacity: 10,
       status: 'SCHEDULED',
@@ -255,6 +261,15 @@ describe('scheduling and availability (e2e)', () => {
   });
 
   it('handles DST gaps and overlaps explicitly at the HTTP boundary', async () => {
+    await request(httpServer)
+      .post(`/api/v1/providers/${providerAId}/activities/${activityId}/sessions`)
+      .set('authorization', bearer('provider-a'))
+      .send({ localStartsAt: '2099-02-30T09:30', capacity: 5 })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({ error: { code: 'SESSION_LOCAL_TIME_INVALID' } });
+      });
+
     await request(httpServer)
       .post(`/api/v1/providers/${providerAId}/activities/${activityId}/sessions`)
       .set('authorization', bearer('provider-a'))
