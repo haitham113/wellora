@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { DateTime, IANAZone } from 'luxon';
+import { DateTime } from 'luxon';
 
+import { canonicalIanaTimezone } from '../../common/time/iana-timezone.js';
 import { DstOverlapPolicy } from '../../generated/prisma/enums.js';
 import { invalidSchedule } from './scheduling-errors.js';
 
@@ -14,10 +15,12 @@ export interface ResolvedLocalTime {
 
 @Injectable()
 export class TimezoneService {
-  assertIanaZone(timezone: string): void {
-    if (!IANAZone.isValidZone(timezone)) {
+  canonicalizeIanaZone(timezone: string): string {
+    const canonical = canonicalIanaTimezone(timezone);
+    if (canonical === null) {
       throw invalidSchedule('INVALID_TIMEZONE', 'Timezone must be a valid IANA timezone.');
     }
+    return canonical;
   }
 
   resolveLocalDateTime(
@@ -25,11 +28,25 @@ export class TimezoneService {
     timezone: string,
     overlapPolicy?: DstOverlapPolicy,
   ): ResolvedLocalTime | null {
-    this.assertIanaZone(timezone);
+    const canonicalTimezone = this.canonicalizeIanaZone(timezone);
+    const calendarValue = DateTime.fromFormat(localDateTime, LOCAL_DATE_TIME_FORMAT, {
+      locale: 'en-US',
+      setZone: true,
+      zone: 'UTC',
+    });
+    if (
+      !calendarValue.isValid ||
+      calendarValue.toFormat(LOCAL_DATE_TIME_FORMAT) !== localDateTime
+    ) {
+      throw invalidSchedule(
+        'SESSION_LOCAL_TIME_INVALID',
+        'The provider-local start time is not a valid calendar date and time.',
+      );
+    }
     const resolved = DateTime.fromFormat(localDateTime, LOCAL_DATE_TIME_FORMAT, {
       locale: 'en-US',
       setZone: true,
-      zone: timezone,
+      zone: canonicalTimezone,
     });
 
     if (!resolved.isValid || resolved.toFormat(LOCAL_DATE_TIME_FORMAT) !== localDateTime) {
@@ -62,7 +79,19 @@ export class TimezoneService {
   }
 
   formatLocalDateTime(instant: Date, timezone: string): string {
-    return DateTime.fromJSDate(instant, { zone: timezone }).toFormat(LOCAL_DATE_TIME_FORMAT);
+    return DateTime.fromJSDate(instant, { zone: this.canonicalizeIanaZone(timezone) }).toFormat(
+      LOCAL_DATE_TIME_FORMAT,
+    );
+  }
+
+  formatLocalDateTimeAtOffset(instant: Date, offsetMinutes: number): string {
+    return DateTime.fromJSDate(instant, { zone: 'UTC' })
+      .plus({ minutes: offsetMinutes })
+      .toFormat(LOCAL_DATE_TIME_FORMAT);
+  }
+
+  offsetAtInstant(instant: Date, timezone: string): number {
+    return DateTime.fromJSDate(instant, { zone: this.canonicalizeIanaZone(timezone) }).offset;
   }
 
   private selectOverlap(

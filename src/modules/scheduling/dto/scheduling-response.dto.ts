@@ -32,6 +32,9 @@ export class AvailabilitySessionResponseDto {
   @ApiProperty({ example: 0, description: 'Selected offset from UTC at session start' })
   utcOffsetMinutes!: number;
 
+  @ApiProperty({ example: 60, description: 'Selected offset from UTC at session end' })
+  utcEndOffsetMinutes!: number;
+
   @ApiProperty({ example: 12 })
   capacity!: number;
 

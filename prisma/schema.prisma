@@ -390,6 +390,7 @@ model ActivitySession {
   endsAt               DateTime              @map("ends_at") @db.Timestamptz(3)
   timezone             String                @db.VarChar(64)
   utcOffsetMinutes     Int                   @map("utc_offset_minutes") @db.SmallInt
+  utcEndOffsetMinutes  Int                   @map("utc_end_offset_minutes") @db.SmallInt
   capacity             Int                   @db.SmallInt
   bookedCount          Int                   @default(0) @map("booked_count") @db.SmallInt
   bookingCutoffMinutes Int                   @map("booking_cutoff_minutes")

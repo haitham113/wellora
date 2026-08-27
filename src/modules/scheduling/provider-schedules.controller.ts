@@ -2,6 +2,7 @@ import { Body, Controller, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post } fr
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
+  ApiConflictResponse,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
@@ -35,7 +36,7 @@ export class ProviderSchedulesController {
   @ApiOperation({
     summary: 'Create a finite provider-local weekly schedule template',
     description:
-      'The provider IANA timezone is snapshotted. The materialization window is capped at 366 days; overlaps select EARLIER or LATER and nonexistent gap occurrences use explicit SKIP behavior.',
+      'The canonical provider IANA timezone is snapshotted. The materialization window is capped at 366 inclusive dates; overlaps select EARLIER or LATER and nonexistent gap occurrences use explicit SKIP behavior.',
   })
   @ApiCreatedResponse({ type: ScheduleTemplateResponseDto })
   @ApiBadRequestResponse({ type: ApiErrorResponseDto })
@@ -54,10 +55,11 @@ export class ProviderSchedulesController {
   @ApiOperation({
     summary: 'Idempotently materialize a finite recurring schedule',
     description:
-      'Unique (activityId, startsAt) persistence plus skipDuplicates makes retries safe. Generation never creates past or already-closed sessions.',
+      'Same-template retries are idempotent. A candidate instant owned by a one-time session or another template aborts generation atomically. Generation never creates past or already-closed sessions.',
   })
   @ApiOkResponse({ type: ScheduleGenerationResponseDto })
   @ApiBadRequestResponse({ type: ApiErrorResponseDto })
+  @ApiConflictResponse({ type: ApiErrorResponseDto })
   @ApiNotFoundResponse({ type: ApiErrorResponseDto })
   generate(
     @CurrentPrincipal() principal: AuthPrincipal,

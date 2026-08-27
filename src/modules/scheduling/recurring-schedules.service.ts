@@ -16,7 +16,7 @@ import type {
   ScheduleTemplateResponseDto,
 } from './dto/scheduling-response.dto.js';
 import { mapScheduleTemplate, scheduleTemplateSelect } from './scheduling.mapper.js';
-import { invalidSchedule, scheduleNotFound } from './scheduling-errors.js';
+import { invalidSchedule, scheduleNotFound, schedulingConflict } from './scheduling-errors.js';
 import { SessionLifecyclePolicy } from './session-lifecycle.policy.js';
 import { addMinutes, subtractMinutes } from './scheduling-time.js';
 import { TimezoneService } from './timezone.service.js';
@@ -55,7 +55,7 @@ export class RecurringSchedulesService {
       });
       if (activity === null) throw activityNotFound();
       this.assertActivitySchedulable(activity.status);
-      this.timezone.assertIanaZone(activity.provider.timezone);
+      const providerTimezone = this.timezone.canonicalizeIanaZone(activity.provider.timezone);
 
       const start = this.timezone.parseLocalDate(input.generationStartDate);
       const end = this.timezone.parseLocalDate(input.generationEndDate);
@@ -77,7 +77,7 @@ export class RecurringSchedulesService {
       const record = await transaction.activityScheduleTemplate.create({
         data: {
           activityId,
-          timezone: activity.provider.timezone,
+          timezone: providerTimezone,
           localStartTime: input.localStartTime,
           weekdays: [...input.weekdays].sort((left, right) => left - right),
           intervalWeeks: input.intervalWeeks,
@@ -150,13 +150,15 @@ export class RecurringSchedulesService {
         }
         const bookingCutoffAt = subtractMinutes(resolved.instant, schedule.bookingCutoffMinutes);
         if (resolved.instant <= now || bookingCutoffAt <= now) continue;
+        const endsAt = addMinutes(resolved.instant, schedule.durationMinutes);
         sessions.push({
           activityId,
           scheduleTemplateId: schedule.id,
           startsAt: resolved.instant,
-          endsAt: addMinutes(resolved.instant, schedule.durationMinutes),
+          endsAt,
           timezone: schedule.timezone,
           utcOffsetMinutes: resolved.offsetMinutes,
+          utcEndOffsetMinutes: this.timezone.offsetAtInstant(endsAt, schedule.timezone),
           capacity: schedule.capacity,
           bookingCutoffMinutes: schedule.bookingCutoffMinutes,
           bookingCutoffAt,
@@ -167,6 +169,26 @@ export class RecurringSchedulesService {
         sessions.length === 0
           ? { count: 0 }
           : await transaction.activitySession.createMany({ data: sessions, skipDuplicates: true });
+      if (sessions.length > 0) {
+        const candidateStarts = sessions.map((session) =>
+          typeof session.startsAt === 'string' ? new Date(session.startsAt) : session.startsAt,
+        );
+        const occupiedStarts = await transaction.activitySession.findMany({
+          where: {
+            activityId,
+            startsAt: { in: candidateStarts },
+            OR: [{ scheduleTemplateId: null }, { scheduleTemplateId: { not: schedule.id } }],
+          },
+          select: { startsAt: true },
+          take: 1,
+        });
+        if (occupiedStarts.length > 0) {
+          throw schedulingConflict(
+            'SCHEDULE_SESSION_CONFLICT',
+            'A generated occurrence conflicts with an existing session for this activity.',
+          );
+        }
+      }
       const generatedAt = new Date();
       const updated = await transaction.activityScheduleTemplate.update({
         where: { id: schedule.id },
@@ -200,7 +222,7 @@ export class RecurringSchedulesService {
         'Generation end date must not precede its start date.',
       );
     }
-    if (days > 366) {
+    if (days > 365) {
       throw invalidSchedule(
         'SCHEDULE_RANGE_TOO_LARGE',
         'A recurring schedule can materialize at most 366 days.',

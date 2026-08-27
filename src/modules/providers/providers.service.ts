@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import type { AuthPrincipal } from '../../common/auth/auth-principal.js';
+import { canonicalIanaTimezone } from '../../common/time/iana-timezone.js';
 import { paginationMeta } from '../../common/pagination/page-query.dto.js';
 import {
   AccountStatus,
@@ -50,7 +51,7 @@ export class ProvidersService {
   ) {}
 
   async create(input: CreateProviderDto): Promise<ProviderResponseDto> {
-    this.assertTimeZone(input.timezone);
+    const timezone = this.canonicalTimezone(input.timezone);
     try {
       const provider = await this.database.$transaction(async (transaction) => {
         const user = await transaction.user.findUnique({
@@ -70,7 +71,7 @@ export class ProvidersService {
             slug: input.slug,
             normalizedSlug: normalizeSlug(input.slug),
             country: input.country,
-            timezone: input.timezone,
+            timezone,
             commissionRateBps: input.commissionRateBps,
             ...(input.description === undefined ? {} : { description: input.description }),
             ...(input.contactEmail === undefined ? {} : { contactEmail: input.contactEmail }),
@@ -133,7 +134,6 @@ export class ProvidersService {
     providerId: string,
     input: AdminUpdateProviderDto,
   ): Promise<ProviderResponseDto> {
-    if (input.timezone !== undefined) this.assertTimeZone(input.timezone);
     return this.updateProviderRecord(providerId, input);
   }
 
@@ -164,7 +164,6 @@ export class ProvidersService {
     providerId: string,
     input: TenantUpdateProviderDto,
   ): Promise<ProviderResponseDto> {
-    if (input.timezone !== undefined) this.assertTimeZone(input.timezone);
     return this.database.$transaction(async (transaction) => {
       await this.authorization.authorize(
         principal,
@@ -181,6 +180,8 @@ export class ProvidersService {
     input: AdminUpdateProviderDto | TenantUpdateProviderDto,
     database: ProviderRecordDatabase = this.database,
   ): Promise<ProviderResponseDto> {
+    const timezone =
+      input.timezone === undefined ? undefined : this.canonicalTimezone(input.timezone);
     const existing = await database.provider.findUnique({
       where: { id: providerId },
       select: { id: true },
@@ -196,7 +197,7 @@ export class ProvidersService {
             : { slug: input.slug, normalizedSlug: normalizeSlug(input.slug) }),
           ...(input.description === undefined ? {} : { description: input.description }),
           ...(input.country === undefined ? {} : { country: input.country }),
-          ...(input.timezone === undefined ? {} : { timezone: input.timezone }),
+          ...(timezone === undefined ? {} : { timezone }),
           ...(input.contactEmail === undefined ? {} : { contactEmail: input.contactEmail }),
           ...(input.contactPhone === undefined ? {} : { contactPhone: input.contactPhone }),
           ...(input.websiteUrl === undefined ? {} : { websiteUrl: input.websiteUrl }),
@@ -219,12 +220,12 @@ export class ProvidersService {
     return this.mapProvider(provider);
   }
 
-  private assertTimeZone(timezone: string): void {
-    try {
-      new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format();
-    } catch {
+  private canonicalTimezone(timezone: string): string {
+    const canonical = canonicalIanaTimezone(timezone);
+    if (canonical === null) {
       throw invalidOperation('INVALID_TIMEZONE', 'Timezone must be a valid IANA timezone.');
     }
+    return canonical;
   }
 
   private rethrowProviderConflict(error: unknown): never {

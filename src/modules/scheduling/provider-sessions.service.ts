@@ -72,9 +72,10 @@ export class ProviderSessionsService {
           'Booking cutoff is required when the activity has no default.',
         );
         this.lifecycle.assertCapacity(input.capacity, 0, activity.maxParticipants);
+        const providerTimezone = this.timezone.canonicalizeIanaZone(activity.provider.timezone);
         const resolved = this.timezone.resolveLocalDateTime(
           input.localStartsAt,
-          activity.provider.timezone,
+          providerTimezone,
           input.dstOverlapPolicy,
         );
         if (resolved === null) {
@@ -86,6 +87,7 @@ export class ProviderSessionsService {
         const now = new Date();
         this.assertFutureStart(resolved.instant, now);
         const bookingCutoffAt = subtractMinutes(resolved.instant, cutoff);
+        const endsAt = addMinutes(resolved.instant, duration);
         if (bookingCutoffAt <= now) {
           throw invalidSchedule(
             'SESSION_BOOKING_CUTOFF_PASSED',
@@ -97,9 +99,10 @@ export class ProviderSessionsService {
           data: {
             activityId,
             startsAt: resolved.instant,
-            endsAt: addMinutes(resolved.instant, duration),
-            timezone: activity.provider.timezone,
+            endsAt,
+            timezone: providerTimezone,
             utcOffsetMinutes: resolved.offsetMinutes,
+            utcEndOffsetMinutes: this.timezone.offsetAtInstant(endsAt, providerTimezone),
             capacity: input.capacity,
             bookingCutoffMinutes: cutoff,
             bookingCutoffAt,
@@ -158,6 +161,7 @@ export class ProviderSessionsService {
     try {
       return await this.database.$transaction(async (transaction) => {
         await this.authorization.authorize(principal, providerId, sessionManagerRoles, transaction);
+        await this.lockOwnedSession(transaction, providerId, sessionId);
         const existing = await transaction.activitySession.findFirst({
           where: { id: sessionId, activity: { providerId } },
           select: {
@@ -173,6 +177,12 @@ export class ProviderSessionsService {
 
         const changesTime =
           input.localStartsAt !== undefined || input.durationMinutes !== undefined;
+        if (changesTime && existing.scheduleTemplateId !== null) {
+          throw invalidSchedule(
+            'RECURRING_SESSION_TIME_IMMUTABLE',
+            'A generated recurring session cannot be rescheduled without an occurrence-exception workflow.',
+          );
+        }
         if (changesTime) this.lifecycle.assertTimeMutable(existing.bookedCount);
         if (input.dstOverlapPolicy !== undefined && input.localStartsAt === undefined) {
           throw invalidSchedule(
@@ -186,7 +196,7 @@ export class ProviderSessionsService {
             ? undefined
             : this.timezone.resolveLocalDateTime(
                 input.localStartsAt,
-                existing.activity.provider.timezone,
+                this.timezone.canonicalizeIanaZone(existing.activity.provider.timezone),
                 input.dstOverlapPolicy,
               );
         if (resolved === null) {
@@ -207,16 +217,26 @@ export class ProviderSessionsService {
           existing.activity.maxParticipants,
         );
         const cutoff = input.bookingCutoffMinutes ?? existing.bookingCutoffMinutes;
+        const endsAt = addMinutes(startsAt, duration);
+        const sessionTimezone =
+          resolved === undefined
+            ? existing.timezone
+            : this.timezone.canonicalizeIanaZone(existing.activity.provider.timezone);
 
         const record = await transaction.activitySession.update({
           where: { id: sessionId },
           data: {
             ...(input.localStartsAt === undefined ? {} : { startsAt }),
-            ...(changesTime ? { endsAt: addMinutes(startsAt, duration) } : {}),
+            ...(changesTime
+              ? {
+                  endsAt,
+                  utcEndOffsetMinutes: this.timezone.offsetAtInstant(endsAt, sessionTimezone),
+                }
+              : {}),
             ...(resolved === undefined
               ? {}
               : {
-                  timezone: existing.activity.provider.timezone,
+                  timezone: sessionTimezone,
                   utcOffsetMinutes: resolved.offsetMinutes,
                 }),
             ...(input.capacity === undefined ? {} : { capacity }),
@@ -251,6 +271,7 @@ export class ProviderSessionsService {
   ): Promise<ProviderSessionResponseDto> {
     return this.database.$transaction(async (transaction) => {
       await this.authorization.authorize(principal, providerId, sessionManagerRoles, transaction);
+      await this.lockOwnedSession(transaction, providerId, sessionId);
       const existing = await transaction.activitySession.findFirst({
         where: { id: sessionId, activity: { providerId } },
         select: sessionSelect,
@@ -280,6 +301,7 @@ export class ProviderSessionsService {
   ): Promise<ProviderSessionResponseDto> {
     return this.database.$transaction(async (transaction) => {
       await this.authorization.authorize(principal, providerId, sessionManagerRoles, transaction);
+      await this.lockOwnedSession(transaction, providerId, sessionId);
       const existing = await transaction.activitySession.findFirst({
         where: { id: sessionId, activity: { providerId } },
         select: sessionSelect,
@@ -334,6 +356,22 @@ export class ProviderSessionsService {
       select: { id: true },
     });
     if (activity === null) throw activityNotFound();
+  }
+
+  private async lockOwnedSession(
+    database: Pick<PrismaService, '$queryRaw'>,
+    providerId: string,
+    sessionId: string,
+  ): Promise<void> {
+    const locked = await database.$queryRaw<{ id: string }[]>`
+      SELECT session."id"
+      FROM "activity_sessions" AS session
+      INNER JOIN "activities" AS activity ON activity."id" = session."activity_id"
+      WHERE session."id" = ${sessionId}::uuid
+        AND activity."provider_id" = ${providerId}::uuid
+      FOR UPDATE OF session
+    `;
+    if (locked.length === 0) throw sessionNotFound();
   }
 
   private optionalRange(

@@ -153,7 +153,7 @@ Public and employee clients use `GET /api/v1/activities` and `GET /api/v1/activi
 
 Activity prices are integer minor units stored as PostgreSQL `bigint` and serialized as decimal strings such as `"2500"`; floating-point money never crosses the API boundary. Drafts may be incomplete, but publishing validates every required description, commercial, duration, location, participation, cancellation, and cutoff field.
 
-Scheduling stores UTC instants as PostgreSQL `timestamptz` and snapshots the provider IANA timezone and chosen start offset on every session. One-time input uses provider-local wall time; DST gaps are rejected and overlaps require an explicit `EARLIER`/`LATER` choice. Weekly recurrence is finite and materialized, with explicit gap skipping and idempotent `(activity_id, starts_at)` persistence. Availability exposes derived remaining capacity without persisting a redundant counter. Transactional booking and overbooking protection begin in Phase 7.
+Scheduling stores UTC instants as PostgreSQL `timestamptz` and snapshots the canonical provider IANA timezone plus the start and end offsets on every session. One-time input uses provider-local wall time; invalid calendar values and DST gaps are rejected distinctly, while overlaps require an explicit `EARLIER`/`LATER` choice. Weekly recurrence is finite and materialized, with explicit gap skipping, idempotent retries, and atomic conflict rejection when another session owns an occurrence. Availability exposes derived remaining capacity without persisting a redundant counter. Provider mutations lock the session row and database checks keep cutoff/capacity/lifecycle fields coherent; transactional booking and overbooking protection begin in Phase 7.
 
 ## Quality commands
 

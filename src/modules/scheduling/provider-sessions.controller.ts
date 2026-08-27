@@ -52,7 +52,7 @@ export class ProviderActivitySessionsController {
   @ApiOperation({
     summary: 'Create a one-time session in the provider timezone',
     description:
-      'localStartsAt is interpreted in the provider IANA timezone. DST gaps are rejected and overlaps require an explicit policy. UTC start/end and effective cutoff are materialized for booking.',
+      'localStartsAt is interpreted in the canonical provider IANA timezone. Invalid calendar values and DST gaps are rejected distinctly, and overlaps require an explicit policy. UTC start/end, endpoint offsets, and effective cutoff are materialized for booking.',
   })
   @ApiCreatedResponse({ type: ProviderSessionResponseDto })
   @ApiBadRequestResponse({ type: ApiErrorResponseDto })
@@ -95,7 +95,7 @@ export class ProviderSessionsController {
   @ApiOperation({
     summary: 'Update a scheduled provider session',
     description:
-      'Capacity cannot fall below bookedCount. Once bookings exist, start/end cannot be changed. Version increments on every mutation.',
+      'The session row is locked. Capacity cannot fall below bookedCount, generated occurrence timing is immutable, and booked one-time sessions cannot be rescheduled. Version increments on every mutation.',
   })
   @ApiOkResponse({ type: ProviderSessionResponseDto })
   @ApiBadRequestResponse({ type: ApiErrorResponseDto })
