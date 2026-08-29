@@ -1,6 +1,6 @@
 # Wellora Marketplace API
 
-Wellora Marketplace is a production-style B2B employee-benefits marketplace API built as a modular monolith. The repository is being delivered phase by phase; Phase 5 adds provider-owned activity sessions, employee availability, finite recurring schedule materialization, explicit lifecycle/capacity rules, and DST-aware timezone handling. Financial, booking, and later workflows remain intentionally out of scope.
+Wellora Marketplace is a production-style B2B employee-benefits marketplace API built as a modular monolith. The repository is being delivered phase by phase; Phase 6 adds immutable employee allowance accounting, atomic balance projections, audited manual adjustments, and exact commission snapshots. Booking and later workflows remain intentionally out of scope.
 
 ## Current capabilities
 
@@ -24,6 +24,9 @@ Wellora Marketplace is a production-style B2B employee-benefits marketplace API 
 - Provider-owned draft, published, paused, and archived activities
 - Public activity search, category/provider/price/location filters, stable sorting, and bounded pagination
 - PostgreSQL-backed publication validity and bigint minor-unit prices serialized safely as strings
+- Employer-funded allowance accounts with immutable, typed, traceable ledger entries
+- Atomic cached balances, idempotent references, explicit single-currency behavior, and audited adjustments
+- Exact bigint commission calculation with booking-ready rate/value snapshots
 - Swagger/OpenAPI at `/docs`
 
 ## Runtime requirements
@@ -162,6 +165,7 @@ npm run lint
 npm run typecheck
 npm test
 npm run test:integration
+npm run test:financial-invariants
 npm run test:auth:e2e
 npm run test:tenant:e2e
 npm run test:e2e
@@ -175,6 +179,7 @@ docker compose --env-file .env.example config --quiet
 
 - [Architecture overview](docs/architecture.md)
 - [ADR-001: Modular monolith](docs/decisions/ADR-001-modular-monolith.md)
+- [ADR-002: Immutable allowance ledger](docs/decisions/ADR-002-allowance-ledger.md)
 - [ADR-004: Multi-tenant authorization](docs/decisions/ADR-004-multi-tenant-authorization.md)
 - [ADR-005: UTC storage and finite provider-local scheduling](docs/decisions/ADR-005-scheduling-timezones.md)
 - [Database and organization ERD](docs/database.md)
@@ -190,6 +195,7 @@ docker compose --env-file .env.example config --quiet
 - Phase 3: Organizations — complete
 - Phase 4: Marketplace — implemented
 - Phase 5: Scheduling — implemented
-- Phase 6 and later: not implemented
+- Phase 6: Financial model — implemented
+- Phase 7 and later: not implemented
 
 Do not infer future-phase functionality from the planned directory names or documentation.
