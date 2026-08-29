@@ -102,6 +102,9 @@ jobs:
       - name: Run integration tests
         run: npm run test:integration
 
+      - name: Run financial invariant tests
+        run: npm run test:financial-invariants
+
       - name: Run e2e tests
         run: npm run test:e2e
 
