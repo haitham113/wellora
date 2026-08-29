@@ -5,6 +5,7 @@ import {
   IsArray,
   IsEnum,
   IsInt,
+  IsISO4217CurrencyCode,
   IsOptional,
   IsString,
   IsUrl,
@@ -116,6 +117,7 @@ export class CreateActivityDto {
   @IsOptional()
   @Transform(trimString)
   @Matches(currencyPattern)
+  @IsISO4217CurrencyCode()
   currency?: string | null;
 
   @ApiPropertyOptional({ nullable: true, example: 60, minimum: 1, maximum: 32_767 })
@@ -304,6 +306,7 @@ export class PublicActivityListQueryDto extends ActivityFiltersDto {
   @IsOptional()
   @Transform(trimString)
   @Matches(currencyPattern)
+  @IsISO4217CurrencyCode()
   currency?: string;
 
   @ApiPropertyOptional({ type: String, example: '1000', pattern: minorUnitsPattern.source })

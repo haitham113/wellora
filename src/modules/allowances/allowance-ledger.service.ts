@@ -31,12 +31,12 @@ export class AllowanceLedgerService {
     transaction: AllowanceTransactionClient,
     account: AllowanceAccountRecord,
     command: LedgerCommand,
-    beforeAppend?: () => void,
+    beforeAppend?: () => void | Promise<void>,
   ): Promise<AllowanceMutationResponseDto> {
     this.assertMatchingCurrency(account.currency, command.currency);
     const retry = await this.findMatchingTransaction(transaction, account, command);
     if (retry !== null) return this.mapMutation(account, retry);
-    beforeAppend?.();
+    await beforeAppend?.();
     return this.append(transaction, account, command);
   }
 
@@ -83,16 +83,57 @@ export class AllowanceLedgerService {
       select: allowanceAccountSelect,
     });
     if (account === null) throw allowanceNotFound();
-    return this.appendOrReturnExisting(transaction, account, {
-      type,
-      delta,
-      currency: command.currency,
-      referenceType: AllowanceReferenceType.BOOKING,
-      referenceId: command.bookingId,
-      actorType: LedgerActorType.USER,
-      actorUserId: command.actorUserId,
-      correlationId: command.correlationId,
+    return this.appendOrReturnExisting(
+      transaction,
+      account,
+      {
+        type,
+        delta,
+        currency: command.currency,
+        referenceType: AllowanceReferenceType.BOOKING,
+        referenceId: command.bookingId,
+        actorType: LedgerActorType.USER,
+        actorUserId: command.actorUserId,
+        correlationId: command.correlationId,
+      },
+      type === AllowanceTransactionType.CANCELLATION_REFUND
+        ? () => this.assertRefundMatchesDebit(transaction, account.id, command)
+        : undefined,
+    );
+  }
+
+  private async assertRefundMatchesDebit(
+    transaction: AllowanceTransactionClient,
+    accountId: string,
+    command: BookingAllowanceCommand,
+  ): Promise<void> {
+    const debit = await transaction.allowanceTransaction.findFirst({
+      where: {
+        accountId,
+        type: AllowanceTransactionType.BOOKING_DEBIT,
+        referenceType: AllowanceReferenceType.BOOKING,
+        referenceId: command.bookingId,
+      },
+      select: { amountDeltaMinor: true, currency: true },
     });
+    if (debit === null) {
+      throw invalidAllowance(
+        'ALLOWANCE_BOOKING_DEBIT_NOT_FOUND',
+        'A cancellation refund requires a preceding allowance debit for the same reference.',
+      );
+    }
+    if (debit.currency !== command.currency) {
+      throw invalidAllowance(
+        'ALLOWANCE_CURRENCY_MISMATCH',
+        'The cancellation refund currency must match its booking debit.',
+      );
+    }
+    if (command.amountMinor > -debit.amountDeltaMinor) {
+      throw invalidAllowance(
+        'ALLOWANCE_REFUND_EXCEEDS_DEBIT',
+        'A cancellation refund cannot exceed its booking allowance debit.',
+      );
+    }
   }
 
   private async append(

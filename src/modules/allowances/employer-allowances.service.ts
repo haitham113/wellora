@@ -93,13 +93,33 @@ export class EmployerAllowancesService {
       });
     } catch (error: unknown) {
       if (isUniqueConstraintError(error)) {
-        throw allowanceConflict(
-          'ALLOWANCE_ACCOUNT_ALREADY_EXISTS',
-          'This employee already has an allowance account or command reference.',
-        );
+        return this.resolveConcurrentInitialAllocation(principal, employerId, employeeId, command);
       }
       throw error;
     }
+  }
+
+  private resolveConcurrentInitialAllocation(
+    principal: AuthPrincipal,
+    employerId: string,
+    employeeId: string,
+    command: LedgerCommand,
+  ): Promise<AllowanceMutationResponseDto> {
+    return this.database.$transaction(async (transaction) => {
+      await this.authorize(principal, employerId, transaction);
+      await this.lockAccount(transaction, employerId, employeeId);
+      const account = await transaction.allowanceAccount.findFirst({
+        where: { employerId, employeeId },
+        select: allowanceAccountSelect,
+      });
+      if (account === null) throw allowanceNotFound();
+      return this.ledger.appendOrReturnExisting(transaction, account, command, () => {
+        throw allowanceConflict(
+          'ALLOWANCE_ACCOUNT_ALREADY_EXISTS',
+          'This employee already has an allowance account; use a top-up instead.',
+        );
+      });
+    });
   }
 
   topUp(

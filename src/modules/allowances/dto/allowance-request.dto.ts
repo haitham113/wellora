@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsEnum,
+  IsISO4217CurrencyCode,
   IsOptional,
   IsString,
   IsUUID,
@@ -23,6 +24,7 @@ class AllowanceCreditCommandDto {
 
   @ApiProperty({ example: 'GBP', pattern: currencyPattern.source })
   @Matches(currencyPattern)
+  @IsISO4217CurrencyCode()
   currency!: string;
 
   @ApiProperty({ format: 'uuid', description: 'Command reference and retry identity' })
@@ -50,6 +52,7 @@ export class ManualAllowanceAdjustmentDto {
 
   @ApiProperty({ example: 'GBP', pattern: currencyPattern.source })
   @Matches(currencyPattern)
+  @IsISO4217CurrencyCode()
   currency!: string;
 
   @ApiProperty({ format: 'uuid', description: 'Command reference and retry identity' })
@@ -70,6 +73,7 @@ export class ExpireAllowanceDto {
 
   @ApiProperty({ example: 'GBP', pattern: currencyPattern.source })
   @Matches(currencyPattern)
+  @IsISO4217CurrencyCode()
   currency!: string;
 
   @ApiProperty({ format: 'uuid', description: 'Expiration policy run or command identity' })

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { isISO4217CurrencyCode } from 'class-validator';
 
 const BASIS_POINT_DENOMINATOR = 10_000n;
 const HALF_BASIS_POINT_DENOMINATOR = 5_000n;
@@ -23,7 +24,7 @@ export class CommissionSnapshotStrategy {
     if (grossAmountMinor < 0n || grossAmountMinor > POSTGRES_BIGINT_MAX) {
       throw new RangeError('Gross amount must fit a non-negative PostgreSQL bigint.');
     }
-    if (!currencyPattern.test(currency)) {
+    if (!currencyPattern.test(currency) || !isISO4217CurrencyCode(currency)) {
       throw new RangeError('Currency must be a three-letter uppercase ISO 4217 code.');
     }
     if (

@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional, OmitType, PartialType } from '@nestjs
 import {
   IsEmail,
   IsEnum,
+  IsISO4217CurrencyCode,
   IsOptional,
   IsString,
   IsUrl,
@@ -44,6 +45,7 @@ export class CreateEmployerDto {
 
   @ApiProperty({ example: 'EGP', minLength: 3, maxLength: 3 })
   @Matches(currencyPattern)
+  @IsISO4217CurrencyCode()
   defaultCurrency!: string;
 
   @ApiPropertyOptional({ example: 'benefits@northwind.example', format: 'email' })
@@ -106,6 +108,7 @@ export class UpdateEmployerSettingsDto {
   @ApiPropertyOptional({ example: 'EGP' })
   @IsOptional()
   @Matches(currencyPattern)
+  @IsISO4217CurrencyCode()
   defaultCurrency?: string;
 
   @ApiPropertyOptional({ format: 'email' })

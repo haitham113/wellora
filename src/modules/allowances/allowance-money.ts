@@ -1,3 +1,5 @@
+import { isISO4217CurrencyCode } from 'class-validator';
+
 import type { ApplicationException } from '../../common/exceptions/application.exception.js';
 import { invalidAllowance } from './allowance-errors.js';
 
@@ -21,7 +23,7 @@ export function parseSignedMinorUnits(value: string): bigint {
 }
 
 export function assertCurrency(currency: string): void {
-  if (!currencyPattern.test(currency)) {
+  if (!currencyPattern.test(currency) || !isISO4217CurrencyCode(currency)) {
     throw invalidAllowance(
       'ALLOWANCE_CURRENCY_INVALID',
       'Currency must be a three-letter uppercase ISO 4217 code.',
