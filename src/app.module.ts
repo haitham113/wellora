@@ -7,7 +7,9 @@ import { ApiExceptionFilter } from './common/exceptions/api-exception.filter.js'
 import { buildLoggerOptions } from './common/logging/logger-options.js';
 import { type EnvironmentVariables, validateEnvironment } from './config/environment.schema.js';
 import { ActivitiesModule } from './modules/activities/activities.module.js';
+import { AllowancesModule } from './modules/allowances/allowances.module.js';
 import { CategoriesModule } from './modules/categories/categories.module.js';
+import { CommissionsModule } from './modules/commissions/commissions.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { EmployersModule } from './modules/employers/employers.module.js';
@@ -27,8 +29,10 @@ import { UsersModule } from './modules/users/users.module.js';
       useFactory: (config: ConfigService<EnvironmentVariables, true>) => buildLoggerOptions(config),
     }),
     ActivitiesModule,
+    AllowancesModule,
     AuthModule,
     CategoriesModule,
+    CommissionsModule,
     EmployersModule,
     HealthModule,
     ProvidersModule,

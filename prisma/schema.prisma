@@ -82,6 +82,27 @@ enum DstGapPolicy {
   SKIP
 }
 
+enum AllowanceTransactionType {
+  INITIAL_ALLOCATION
+  TOP_UP
+  BOOKING_DEBIT
+  CANCELLATION_REFUND
+  MANUAL_ADJUSTMENT
+  EXPIRATION
+}
+
+enum AllowanceReferenceType {
+  ALLOWANCE_GRANT
+  BOOKING
+  MANUAL_ADJUSTMENT
+  EXPIRATION_POLICY
+}
+
+enum LedgerActorType {
+  USER
+  SYSTEM
+}
+
 model User {
   id                String        @id @default(uuid()) @db.Uuid
   email             String        @db.VarChar(320)
@@ -99,7 +120,9 @@ model User {
   employerMemberships       EmployerMembership[]
   employeeProfiles          Employee[]
   providerMemberships       ProviderMembership[]
-  cancelledActivitySessions ActivitySession[]    @relation("ActivitySessionCancelledBy")
+  cancelledActivitySessions ActivitySession[]      @relation("ActivitySessionCancelledBy")
+  allowanceTransactions     AllowanceTransaction[] @relation("AllowanceTransactionActor")
+  auditLogs                 AuditLog[]             @relation("AuditLogActor")
 
   @@index([status])
   @@map("users")
@@ -174,8 +197,9 @@ model Employer {
   createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  memberships EmployerMembership[]
-  employees   Employee[]
+  memberships       EmployerMembership[]
+  employees         Employee[]
+  allowanceAccounts AllowanceAccount[]
 
   @@index([status, name, id])
   @@index([country, status])
@@ -215,9 +239,11 @@ model Employee {
   createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  employer Employer @relation(fields: [employerId], references: [id], onDelete: Restrict)
-  user     User?    @relation(fields: [userId], references: [id], onDelete: Restrict)
+  employer         Employer          @relation(fields: [employerId], references: [id], onDelete: Restrict)
+  user             User?             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  allowanceAccount AllowanceAccount?
 
+  @@unique([id, employerId])
   @@unique([employerId, normalizedEmail])
   @@unique([employerId, userId])
   @@unique([employerId, employeeNumber])
@@ -414,4 +440,72 @@ model ActivitySession {
   @@index([scheduleTemplateId, startsAt, id])
   @@index([cancelledByUserId, cancelledAt])
   @@map("activity_sessions")
+}
+
+model AllowanceAccount {
+  id                  String   @id @default(uuid()) @db.Uuid
+  employerId          String   @map("employer_id") @db.Uuid
+  employeeId          String   @unique @map("employee_id") @db.Uuid
+  currency            String   @db.Char(3)
+  currentBalanceMinor BigInt   @default(0) @map("current_balance_minor") @db.BigInt
+  version             Int      @default(0)
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  employer     Employer               @relation(fields: [employerId], references: [id], onDelete: Restrict)
+  employee     Employee               @relation(fields: [employeeId, employerId], references: [id, employerId], onDelete: Restrict)
+  transactions AllowanceTransaction[]
+
+  @@unique([employeeId, employerId])
+  @@index([employerId, employeeId])
+  @@map("allowance_accounts")
+}
+
+model AllowanceTransaction {
+  id                    String                   @id @default(uuid()) @db.Uuid
+  accountId             String                   @map("account_id") @db.Uuid
+  sequence              Int
+  type                  AllowanceTransactionType
+  amountDeltaMinor      BigInt                   @map("amount_delta_minor") @db.BigInt
+  resultingBalanceMinor BigInt                   @map("resulting_balance_minor") @db.BigInt
+  currency              String                   @db.Char(3)
+  referenceType         AllowanceReferenceType   @map("reference_type")
+  referenceId           String                   @map("reference_id") @db.Uuid
+  metadata              Json?                    @db.JsonB
+  actorType             LedgerActorType          @map("actor_type")
+  actorUserId           String?                  @map("actor_user_id") @db.Uuid
+  correlationId         String                   @map("correlation_id") @db.VarChar(128)
+  createdAt             DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  account  AllowanceAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  actor    User?            @relation("AllowanceTransactionActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  auditLog AuditLog?
+
+  @@unique([accountId, sequence])
+  @@unique([accountId, type, referenceType, referenceId], map: "allowance_transactions_reference_key")
+  @@index([accountId, createdAt, id])
+  @@index([referenceType, referenceId])
+  @@index([actorUserId, createdAt])
+  @@map("allowance_transactions")
+}
+
+model AuditLog {
+  id                     String   @id @default(uuid()) @db.Uuid
+  actorUserId            String   @map("actor_user_id") @db.Uuid
+  action                 String   @db.VarChar(80)
+  entityType             String   @map("entity_type") @db.VarChar(80)
+  entityId               String   @map("entity_id") @db.Uuid
+  allowanceTransactionId String?  @unique @map("allowance_transaction_id") @db.Uuid
+  beforeState            Json?    @map("before_state") @db.JsonB
+  afterState             Json?    @map("after_state") @db.JsonB
+  correlationId          String   @map("correlation_id") @db.VarChar(128)
+  requestMetadata        Json?    @map("request_metadata") @db.JsonB
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  actor                User                  @relation("AuditLogActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  allowanceTransaction AllowanceTransaction? @relation(fields: [allowanceTransactionId], references: [id], onDelete: Restrict)
+
+  @@index([entityType, entityId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@map("audit_logs")
 }

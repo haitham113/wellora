@@ -1,6 +1,6 @@
 {
   "name": "b2b-marketplace-api",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Wellora Marketplace modular-monolith API",
   "private": true,
   "license": "UNLICENSED",
@@ -22,6 +22,7 @@
     "test:watch": "jest --config jest.config.cjs --watch",
     "test:cov": "jest --config jest.config.cjs --coverage --runInBand",
     "test:integration": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config test/jest-integration.config.cjs --runInBand",
+    "test:financial-invariants": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config test/jest-financial-invariants.config.cjs --runInBand",
     "test:e2e": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config test/jest-e2e.config.cjs --runInBand",
     "test:auth:e2e": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config test/jest-e2e.config.cjs --runInBand test/e2e/auth.e2e-spec.ts",
     "test:tenant:e2e": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config test/jest-e2e.config.cjs --runInBand test/e2e/organizations-tenant.e2e-spec.ts",
