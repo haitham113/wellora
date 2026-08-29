@@ -7,6 +7,7 @@ Wellora Marketplace is a production-style B2B employee-benefits marketplace API 
 - NestJS 11 application with strict TypeScript
 - Startup environment validation
 - PostgreSQL access through Prisma 7 and the `pg` driver adapter
+- Separate migration-owner and least-privilege API database roles
 - Redis connectivity
 - Structured Pino request logging with correlation IDs and sensitive-field redaction
 - Separate liveness and dependency-readiness endpoints
@@ -47,7 +48,7 @@ The package also supports Node.js 22.12 or newer in the Node 22 line. Older Node
 
 2. Replace all example credentials in `.env`:
 
-   - Keep `POSTGRES_PASSWORD` and the password embedded in `DATABASE_URL` synchronized.
+   - Keep the owner credentials in `POSTGRES_*`/`MIGRATION_DATABASE_URL` separate from the least-privilege `APP_DATABASE_*`/`DATABASE_URL` runtime credentials.
    - Generate independent random values for `JWT_ACCESS_SECRET` and `AUTH_METADATA_SECRET`. For example, run `openssl rand -base64 48` separately for each value.
 
    Production startup rejects the tracked placeholder values and refuses to reuse JWT signing material as the metadata HMAC key.
@@ -73,6 +74,7 @@ For host-based development, start only the dependencies and then run NestJS:
 docker compose up -d postgres redis
 npm ci
 npm run prisma:migrate:deploy
+docker compose run --rm provision-runtime-role
 npm run start:dev
 ```
 
@@ -88,7 +90,10 @@ All runtime configuration is validated during startup. The application fails fas
 | `PORT`                           | HTTP listen port                              |
 | `LOG_LEVEL`                      | Pino log level                                |
 | `CORS_ORIGINS`                   | Comma-separated allowed origins               |
-| `DATABASE_URL`                   | PostgreSQL connection URL                     |
+| `MIGRATION_DATABASE_URL`         | Owner URL used only by Prisma migrations      |
+| `DATABASE_URL`                   | Least-privilege API runtime PostgreSQL URL    |
+| `APP_DATABASE_USER`              | Compose-provisioned API database role         |
+| `APP_DATABASE_PASSWORD`          | Independent API database-role password        |
 | `DB_POOL_MAX`                    | Maximum PostgreSQL pool size per API instance |
 | `DB_CONNECT_TIMEOUT_MS`          | PostgreSQL connection timeout                 |
 | `REDIS_URL`                      | Redis connection URL                          |

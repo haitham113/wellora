@@ -10,7 +10,7 @@ services:
       PORT: 3000
       LOG_LEVEL: ${LOG_LEVEL:-info}
       CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set}
-      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER must be set}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB must be set}?schema=public
+      DATABASE_URL: postgresql://${APP_DATABASE_USER:?APP_DATABASE_USER must be set}:${APP_DATABASE_PASSWORD:?APP_DATABASE_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB must be set}?schema=public
       DB_POOL_MAX: ${DB_POOL_MAX:-10}
       DB_CONNECT_TIMEOUT_MS: ${DB_CONNECT_TIMEOUT_MS:-3000}
       REDIS_URL: redis://redis:6379
@@ -37,7 +37,7 @@ services:
     ports:
       - '${PORT:-3000}:3000'
     depends_on:
-      migrate:
+      provision-runtime-role:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
@@ -66,6 +66,22 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    restart: 'no'
+
+  provision-runtime-role:
+    image: postgres:18.6-alpine3.23
+    environment:
+      PGHOST: postgres
+      PGDATABASE: ${POSTGRES_DB:?POSTGRES_DB must be set}
+      PGUSER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      PGOPTIONS: -c wellora.app_database_user=${APP_DATABASE_USER:?APP_DATABASE_USER must be set} -c wellora.app_database_password=${APP_DATABASE_PASSWORD:?APP_DATABASE_PASSWORD must be set}
+    volumes:
+      - ./infrastructure/postgres/provision-runtime-role.sql:/opt/wellora/provision-runtime-role.sql:ro
+    command: ['psql', '--file=/opt/wellora/provision-runtime-role.sql']
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     restart: 'no'
 
   postgres:
