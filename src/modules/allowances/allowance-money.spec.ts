@@ -1,5 +1,9 @@
 import { ApplicationException } from '../../common/exceptions/application.exception.js';
-import { parsePositiveMinorUnits, parseSignedMinorUnits } from './allowance-money.js';
+import {
+  assertCurrency,
+  parsePositiveMinorUnits,
+  parseSignedMinorUnits,
+} from './allowance-money.js';
 
 describe('allowance money', () => {
   it('parses values beyond JavaScript safe integers without floating point', () => {
@@ -20,4 +24,16 @@ describe('allowance money', () => {
       expect(() => parseSignedMinorUnits(value)).toThrow(ApplicationException);
     },
   );
+
+  it.each(['GBP', 'EGP', 'USD'])('accepts assigned uppercase ISO 4217 code %s', (currency) => {
+    expect(() => {
+      assertCurrency(currency);
+    }).not.toThrow();
+  });
+
+  it.each(['ZZZ', 'gbp', 'GB', 'GBP1'])('rejects non-ISO currency code %s', (currency) => {
+    expect(() => {
+      assertCurrency(currency);
+    }).toThrow(ApplicationException);
+  });
 });

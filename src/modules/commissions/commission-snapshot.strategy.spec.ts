@@ -30,6 +30,7 @@ describe('CommissionSnapshotStrategy', () => {
   it.each([
     [-1n, 'GBP', 1000],
     [100n, 'gbp', 1000],
+    [100n, 'ZZZ', 1000],
     [100n, 'GBP', 10_001],
     [100n, 'GBP', 1.5],
   ] as const)('rejects invalid snapshot input %#', (gross, currency, rate) => {

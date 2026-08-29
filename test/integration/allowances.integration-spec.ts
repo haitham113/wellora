@@ -283,6 +283,48 @@ describe('allowance persistence (integration)', () => {
       ),
     ).rejects.toMatchObject({ response: { code: 'ALLOWANCE_REFERENCE_REUSED' } });
 
+    await expect(
+      database.$transaction((transaction) =>
+        ledger.recordCancellationRefund(transaction, {
+          accountId,
+          amountMinor: 100n,
+          currency: 'GBP',
+          bookingId: randomUUID(),
+          actorUserId: employeeUserId,
+          correlationId: 'p6-refund-without-debit',
+        }),
+      ),
+    ).rejects.toMatchObject({ response: { code: 'ALLOWANCE_BOOKING_DEBIT_NOT_FOUND' } });
+    const beforeMissingDebit = await database.allowanceAccount.findUniqueOrThrow({
+      where: { id: accountId },
+    });
+    await expect(
+      database.$transaction(async (transaction) => {
+        await transaction.allowanceTransaction.create({
+          data: {
+            accountId,
+            sequence: beforeMissingDebit.version + 1,
+            type: AllowanceTransactionType.CANCELLATION_REFUND,
+            amountDeltaMinor: 100n,
+            resultingBalanceMinor: beforeMissingDebit.currentBalanceMinor + 100n,
+            currency: 'GBP',
+            referenceType: AllowanceReferenceType.BOOKING,
+            referenceId: randomUUID(),
+            actorType: LedgerActorType.USER,
+            actorUserId: employeeUserId,
+            correlationId: 'p6-raw-refund-without-debit',
+          },
+        });
+        await transaction.allowanceAccount.update({
+          where: { id: accountId, version: beforeMissingDebit.version },
+          data: {
+            currentBalanceMinor: { increment: 100n },
+            version: { increment: 1 },
+          },
+        });
+      }),
+    ).rejects.toBeDefined();
+
     const bookingId = randomUUID();
     await database.$transaction((transaction) =>
       ledger.recordBookingDebit(transaction, {
@@ -297,6 +339,44 @@ describe('allowance persistence (integration)', () => {
     const beforeRefund = await database.allowanceAccount.findUniqueOrThrow({
       where: { id: accountId },
     });
+    await expect(
+      database.$transaction((transaction) =>
+        ledger.recordCancellationRefund(transaction, {
+          accountId,
+          amountMinor: 101n,
+          currency: 'GBP',
+          bookingId,
+          actorUserId: employeeUserId,
+          correlationId: 'p6-refund-exceeds-debit',
+        }),
+      ),
+    ).rejects.toMatchObject({ response: { code: 'ALLOWANCE_REFUND_EXCEEDS_DEBIT' } });
+    await expect(
+      database.$transaction(async (transaction) => {
+        await transaction.allowanceTransaction.create({
+          data: {
+            accountId,
+            sequence: beforeRefund.version + 1,
+            type: AllowanceTransactionType.CANCELLATION_REFUND,
+            amountDeltaMinor: 101n,
+            resultingBalanceMinor: beforeRefund.currentBalanceMinor + 101n,
+            currency: 'GBP',
+            referenceType: AllowanceReferenceType.BOOKING,
+            referenceId: bookingId,
+            actorType: LedgerActorType.USER,
+            actorUserId: employeeUserId,
+            correlationId: 'p6-raw-refund-exceeds-debit',
+          },
+        });
+        await transaction.allowanceAccount.update({
+          where: { id: accountId, version: beforeRefund.version },
+          data: {
+            currentBalanceMinor: { increment: 101n },
+            version: { increment: 1 },
+          },
+        });
+      }),
+    ).rejects.toBeDefined();
     const refundCommand = {
       accountId,
       amountMinor: 100n,
@@ -339,6 +419,49 @@ describe('allowance persistence (integration)', () => {
         }),
       ),
     ).rejects.toMatchObject({ response: { code: 'ALLOWANCE_REFERENCE_REUSED' } });
+  });
+
+  it('returns one allocation for simultaneous identical initial-allocation retries', async () => {
+    const employee = await database.employee.create({
+      data: {
+        employerId,
+        email: `${prefix}-concurrent-allocation@example.com`,
+        normalizedEmail: `${prefix}-concurrent-allocation@example.com`,
+        firstName: 'Concurrent',
+        lastName: 'Allocation',
+      },
+    });
+    const command = {
+      amountMinor: '5000',
+      currency: 'GBP',
+      referenceId: randomUUID(),
+    };
+    const [first, second] = await Promise.all([
+      allowances.initialAllocation(
+        principal,
+        employerId,
+        employee.id,
+        command,
+        'p6-concurrent-initial-first',
+      ),
+      allowances.initialAllocation(
+        principal,
+        employerId,
+        employee.id,
+        command,
+        'p6-concurrent-initial-second',
+      ),
+    ]);
+    expect(second.transaction.id).toBe(first.transaction.id);
+    expect(second.account.id).toBe(first.account.id);
+    await expect(
+      database.allowanceTransaction.count({
+        where: {
+          accountId: first.account.id,
+          type: AllowanceTransactionType.INITIAL_ALLOCATION,
+        },
+      }),
+    ).resolves.toBe(1);
   });
 
   it('rolls back a rejected debit without changing either balance or ledger', async () => {
@@ -511,7 +634,111 @@ describe('allowance persistence (integration)', () => {
     });
   });
 
+  it('rejects incomplete and cross-tenant manual-adjustment audits at commit', async () => {
+    const account = await database.allowanceAccount.findUniqueOrThrow({
+      where: { id: accountId },
+    });
+    const countBefore = await database.allowanceTransaction.count({ where: { accountId } });
+    const incompleteTransactionId = randomUUID();
+    await expect(
+      database.$transaction(async (transaction) => {
+        await transaction.allowanceTransaction.create({
+          data: {
+            id: incompleteTransactionId,
+            accountId,
+            sequence: account.version + 1,
+            type: AllowanceTransactionType.MANUAL_ADJUSTMENT,
+            amountDeltaMinor: 100n,
+            resultingBalanceMinor: account.currentBalanceMinor + 100n,
+            currency: 'GBP',
+            referenceType: AllowanceReferenceType.MANUAL_ADJUSTMENT,
+            referenceId: randomUUID(),
+            metadata: { reason: 'Required audit state is deliberately absent' },
+            actorType: LedgerActorType.USER,
+            actorUserId: adminUserId,
+            correlationId: 'p6-incomplete-audit',
+          },
+        });
+        await transaction.auditLog.create({
+          data: {
+            actorUserId: adminUserId,
+            action: 'ALLOWANCE_MANUAL_ADJUSTMENT',
+            entityType: 'ALLOWANCE_TRANSACTION',
+            entityId: incompleteTransactionId,
+            allowanceTransactionId: incompleteTransactionId,
+            correlationId: 'p6-incomplete-audit',
+          },
+        });
+        await transaction.allowanceAccount.update({
+          where: { id: accountId, version: account.version },
+          data: {
+            currentBalanceMinor: { increment: 100n },
+            version: { increment: 1 },
+          },
+        });
+      }),
+    ).rejects.toBeDefined();
+
+    const unauthorizedTransactionId = randomUUID();
+    await expect(
+      database.$transaction(async (transaction) => {
+        await transaction.allowanceTransaction.create({
+          data: {
+            id: unauthorizedTransactionId,
+            accountId,
+            sequence: account.version + 1,
+            type: AllowanceTransactionType.MANUAL_ADJUSTMENT,
+            amountDeltaMinor: 100n,
+            resultingBalanceMinor: account.currentBalanceMinor + 100n,
+            currency: 'GBP',
+            referenceType: AllowanceReferenceType.MANUAL_ADJUSTMENT,
+            referenceId: randomUUID(),
+            metadata: { reason: 'Cross-tenant actor must be rejected' },
+            actorType: LedgerActorType.USER,
+            actorUserId: otherAdminUserId,
+            correlationId: 'p6-cross-tenant-audit',
+          },
+        });
+        await transaction.auditLog.create({
+          data: {
+            actorUserId: otherAdminUserId,
+            action: 'ALLOWANCE_MANUAL_ADJUSTMENT',
+            entityType: 'ALLOWANCE_TRANSACTION',
+            entityId: unauthorizedTransactionId,
+            allowanceTransactionId: unauthorizedTransactionId,
+            beforeState: {
+              balanceMinor: account.currentBalanceMinor.toString(),
+              currency: account.currency,
+            },
+            afterState: {
+              balanceMinor: (account.currentBalanceMinor + 100n).toString(),
+              currency: account.currency,
+            },
+            correlationId: 'p6-cross-tenant-audit',
+            requestMetadata: { reason: 'Cross-tenant actor must be rejected' },
+          },
+        });
+        await transaction.allowanceAccount.update({
+          where: { id: accountId, version: account.version },
+          data: {
+            currentBalanceMinor: { increment: 100n },
+            version: { increment: 1 },
+          },
+        });
+      }),
+    ).rejects.toBeDefined();
+    await expect(database.allowanceTransaction.count({ where: { accountId } })).resolves.toBe(
+      countBefore,
+    );
+  });
+
   it('enforces currency and employer tenant boundaries', async () => {
+    await expect(
+      database.employer.update({
+        where: { id: employerId },
+        data: { defaultCurrency: 'ZZZ' },
+      }),
+    ).rejects.toBeDefined();
     await expect(
       allowances.topUp(
         principal,

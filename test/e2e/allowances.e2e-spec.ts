@@ -173,6 +173,11 @@ describe('allowances (e2e)', () => {
       .expect(({ body: errorBody }) => {
         expect(errorBody).toMatchObject({ error: { code: 'ALLOWANCE_CURRENCY_MISMATCH' } });
       });
+    await request(httpServer)
+      .post(`${allowancePath()}/initial-allocation`)
+      .set('authorization', bearer('admin-a'))
+      .send({ ...body, currency: 'ZZZ' })
+      .expect(400);
   });
 
   it('allocates, retries idempotently, adjusts, expires and exposes the ledger', async () => {
