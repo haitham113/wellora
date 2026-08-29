@@ -227,7 +227,118 @@ describe('allowance persistence (integration)', () => {
       action: 'ALLOWANCE_MANUAL_ADJUSTMENT',
       actorUserId: adminUserId,
       correlationId: 'p6-manual',
+      beforeState: { balanceMinor: '10500', currency: 'GBP' },
+      afterState: { balanceMinor: '10000', currency: 'GBP' },
+      requestMetadata: { reason: 'Correction approved for integration test' },
     });
+  });
+
+  it('prevents duplicate top-ups and refunds while preserving exact retries', async () => {
+    const topUpReferenceId = randomUUID();
+    const beforeTopUp = await database.allowanceAccount.findUniqueOrThrow({
+      where: { id: accountId },
+    });
+    const topUpCommand = {
+      amountMinor: '250',
+      currency: 'GBP',
+      referenceId: topUpReferenceId,
+    };
+    const topUp = await allowances.topUp(
+      principal,
+      employerId,
+      employeeId,
+      topUpCommand,
+      'p6-duplicate-topup-original',
+    );
+    const topUpRetry = await allowances.topUp(
+      principal,
+      employerId,
+      employeeId,
+      topUpCommand,
+      'p6-duplicate-topup-retry',
+    );
+    expect(topUpRetry.transaction.id).toBe(topUp.transaction.id);
+    await expect(
+      database.allowanceTransaction.count({
+        where: {
+          accountId,
+          type: AllowanceTransactionType.TOP_UP,
+          referenceId: topUpReferenceId,
+        },
+      }),
+    ).resolves.toBe(1);
+    await expect(
+      database.allowanceAccount.findUniqueOrThrow({ where: { id: accountId } }),
+    ).resolves.toMatchObject({
+      currentBalanceMinor: beforeTopUp.currentBalanceMinor + 250n,
+      version: beforeTopUp.version + 1,
+    });
+    await expect(
+      allowances.topUp(
+        principal,
+        employerId,
+        employeeId,
+        { ...topUpCommand, amountMinor: '251' },
+        'p6-duplicate-topup-conflict',
+      ),
+    ).rejects.toMatchObject({ response: { code: 'ALLOWANCE_REFERENCE_REUSED' } });
+
+    const bookingId = randomUUID();
+    await database.$transaction((transaction) =>
+      ledger.recordBookingDebit(transaction, {
+        accountId,
+        amountMinor: 100n,
+        currency: 'GBP',
+        bookingId,
+        actorUserId: employeeUserId,
+        correlationId: 'p6-duplicate-refund-debit',
+      }),
+    );
+    const beforeRefund = await database.allowanceAccount.findUniqueOrThrow({
+      where: { id: accountId },
+    });
+    const refundCommand = {
+      accountId,
+      amountMinor: 100n,
+      currency: 'GBP',
+      bookingId,
+      actorUserId: employeeUserId,
+      correlationId: 'p6-duplicate-refund-original',
+    };
+    const refund = await database.$transaction((transaction) =>
+      ledger.recordCancellationRefund(transaction, refundCommand),
+    );
+    const refundRetry = await database.$transaction((transaction) =>
+      ledger.recordCancellationRefund(transaction, {
+        ...refundCommand,
+        correlationId: 'p6-duplicate-refund-retry',
+      }),
+    );
+    expect(refundRetry.transaction.id).toBe(refund.transaction.id);
+    await expect(
+      database.allowanceTransaction.count({
+        where: {
+          accountId,
+          type: AllowanceTransactionType.CANCELLATION_REFUND,
+          referenceId: bookingId,
+        },
+      }),
+    ).resolves.toBe(1);
+    await expect(
+      database.allowanceAccount.findUniqueOrThrow({ where: { id: accountId } }),
+    ).resolves.toMatchObject({
+      currentBalanceMinor: beforeRefund.currentBalanceMinor + 100n,
+      version: beforeRefund.version + 1,
+    });
+    await expect(
+      database.$transaction((transaction) =>
+        ledger.recordCancellationRefund(transaction, {
+          ...refundCommand,
+          amountMinor: 101n,
+          correlationId: 'p6-duplicate-refund-conflict',
+        }),
+      ),
+    ).rejects.toMatchObject({ response: { code: 'ALLOWANCE_REFERENCE_REUSED' } });
   });
 
   it('rolls back a rejected debit without changing either balance or ledger', async () => {
@@ -245,6 +356,33 @@ describe('allowance persistence (integration)', () => {
         }),
       ),
     ).rejects.toMatchObject({ response: { code: 'ALLOWANCE_INSUFFICIENT_BALANCE' } });
+    await expect(database.allowanceTransaction.count({ where: { accountId } })).resolves.toBe(
+      countBefore,
+    );
+    await expect(
+      database.allowanceAccount.findUniqueOrThrow({ where: { id: accountId } }),
+    ).resolves.toMatchObject({
+      currentBalanceMinor: before.currentBalanceMinor,
+      version: before.version,
+    });
+  });
+
+  it('rolls back both ledger and balance after a successful append when later work fails', async () => {
+    const before = await database.allowanceAccount.findUniqueOrThrow({ where: { id: accountId } });
+    const countBefore = await database.allowanceTransaction.count({ where: { accountId } });
+    await expect(
+      database.$transaction(async (transaction) => {
+        await ledger.recordBookingDebit(transaction, {
+          accountId,
+          amountMinor: 1n,
+          currency: 'GBP',
+          bookingId: randomUUID(),
+          actorUserId: employeeUserId,
+          correlationId: 'p6-forced-rollback-after-append',
+        });
+        throw new Error('Force rollback after the allowance write.');
+      }),
+    ).rejects.toThrow('Force rollback after the allowance write.');
     await expect(database.allowanceTransaction.count({ where: { accountId } })).resolves.toBe(
       countBefore,
     );
